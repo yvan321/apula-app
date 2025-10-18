@@ -267,10 +267,38 @@ class _LoginScreenState extends State<LoginScreen> {
                           },
                         );
                       },
-                      child: Text(
+                      child: const Text(
                         "Use Fingerprint",
-                        style: TextStyle(color: const Color(0xFFA30000)),
+                        style: TextStyle(color: Color(0xFFA30000)),
                       ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // 🧭 Don't have an account? Sign up
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          "Don’t have an account? ",
+                          style: TextStyle(
+                            color: colorScheme.onSurface.withOpacity(0.7),
+                            fontSize: 14,
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.pushNamed(context, '/register');
+                          },
+                          child: const Text(
+                            "Sign up",
+                            style: TextStyle(
+                              color: Color(0xFFA30000),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

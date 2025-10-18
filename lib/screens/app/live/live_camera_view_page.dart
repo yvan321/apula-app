@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart'; // ✅ for alarm sound
+import 'package:audioplayers/audioplayers.dart';
 
 class LiveCameraViewPage extends StatefulWidget {
   final String deviceName;
@@ -13,13 +13,15 @@ class LiveCameraViewPage extends StatefulWidget {
 class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   double temperature = 32.5;
   bool smokeDetected = false;
-  bool fireDetected = false; // 🔥 Default OFF
+  bool fireDetected = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
 
-  /// 🔥 Trigger Fire Alert Dialog and Alarm
+  /// 🔄 NEW: Track selected view type
+  String _selectedView = "CCTV"; // CCTV or Thermal
+
+  // 🔥 Fire Alert Dialog
   void _triggerFireAlert() async {
     await _audioPlayer.play(AssetSource('sounds/fire_alarm.mp3'));
-
     if (mounted) {
       final theme = Theme.of(context);
       final isDark = theme.brightness == Brightness.dark;
@@ -31,9 +33,8 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
           ),
-          backgroundColor: isDark
-              ? Colors.grey[900]
-              : theme.colorScheme.surface,
+          backgroundColor:
+              isDark ? Colors.grey[900] : theme.colorScheme.surface,
           titlePadding: const EdgeInsets.only(top: 24),
           title: Column(
             mainAxisSize: MainAxisSize.min,
@@ -56,49 +57,95 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
               ),
             ],
           ),
-          content: Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(
-              "The system has detected an active fire in the monitored area.",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-                height: 1.4,
-                color: isDark ? Colors.white70 : Colors.black87,
-              ),
-            ),
-          ),
-          actionsAlignment: MainAxisAlignment.center,
-          actionsPadding: const EdgeInsets.only(bottom: 16),
-          actions: [
-            ElevatedButton.icon(
-              onPressed: () {
-                _audioPlayer.stop();
-                Navigator.pop(context);
-                _callFireDepartment();
-                setState(() => fireDetected = false); // Reset
-              },
-              icon: const Icon(Icons.call, color: Colors.white),
-              label: const Text(
-                "CALL",
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Text(
+                "The system has detected an active fire in the monitored area.",
+                textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
                   fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  height: 1.4,
+                  color: isDark ? Colors.white70 : Colors.black87,
                 ),
               ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: theme.colorScheme.primary,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 30,
-                  vertical: 14,
+              const SizedBox(height: 16),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'assets/images/fire_preview.jpg',
+                  height: 160,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 5,
               ),
+            ],
+          ),
+          actionsPadding:
+              const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () {
+                    _audioPlayer.stop();
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            LiveCameraViewPage(deviceName: widget.deviceName),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.videocam, color: Colors.white),
+                  label: const Text(
+                    "VIEW CCTV",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[700],
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 30, vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    _audioPlayer.stop();
+                    Navigator.pop(context);
+                    _alertBDDRMO();
+                    setState(() => fireDetected = false);
+                  },
+                  icon: const Icon(Icons.warning, color: Colors.white),
+                  label: const Text(
+                    "ALERT BDDRMO",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: theme.colorScheme.primary,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 30, vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    elevation: 5,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -106,12 +153,11 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
     }
   }
 
-  /// ☎️ Simulate Calling Fire Department
-  void _callFireDepartment() {
+  void _alertBDDRMO() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
-          "Calling Fire Department...",
+          "Alert sent to BDDRMO...",
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.red,
@@ -135,7 +181,7 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 🔙 Custom Back Button
+            // 🔙 Back Button
             Padding(
               padding: const EdgeInsets.only(left: 10, top: 10),
               child: InkWell(
@@ -161,19 +207,54 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // ✨ Title
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 20),
-                      child: Text(
-                        "Live Footage",
-                        style: TextStyle(
-                          color: colorScheme.primary,
-                          fontSize: 30,
-                          fontWeight: FontWeight.bold,
-                        ),
+                    Text(
+                      "Live Footage",
+                      style: TextStyle(
+                        color: colorScheme.primary,
+                        fontSize: 30,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
 
-                    // 🎥 CCTV Feed Section
+                    const SizedBox(height: 10),
+
+                    // 🔄 CCTV / Thermal Toggle
+                    Center(
+                      child: ToggleButtons(
+                        borderRadius: BorderRadius.circular(12),
+                        borderColor: colorScheme.primary,
+                        selectedBorderColor: colorScheme.primary,
+                        fillColor: colorScheme.primary.withOpacity(0.2),
+                        color: colorScheme.primary,
+                        selectedColor: colorScheme.primary,
+                        textStyle: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                        isSelected: [
+                          _selectedView == "CCTV",
+                          _selectedView == "THERMAL"
+                        ],
+                        onPressed: (index) {
+                          setState(() {
+                            _selectedView =
+                                index == 0 ? "CCTV" : "THERMAL";
+                          });
+                        },
+                        children: const [
+                          Padding(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 8),
+                              child: Text("CCTV")),
+                          Padding(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 8),
+                              child: Text("THERMAL")),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+          
                     Expanded(
                       flex: 3,
                       child: Container(
@@ -181,25 +262,62 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                           color: Colors.black,
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: const Center(
-                          child: Icon(
-                            Icons.videocam,
-                            color: Colors.white,
-                            size: 100,
-                          ),
-                        ),
+                        child: _selectedView == "CCTV"
+                            ? const Center(
+                                child: Icon(Icons.videocam,
+                                    color: Colors.white, size: 100),
+                              )
+                            : ClipRRect(
+                                borderRadius: BorderRadius.circular(20),
+                                child: Image.asset(
+                                  'assets/examples/thermal_example.png',
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                ),
+                              ),
                       ),
                     ),
 
                     const SizedBox(height: 20),
 
-                    // 📊 Device Info Section
+                    if (fireDetected) ...[
+                      Center(
+                        child: ElevatedButton.icon(
+                          onPressed: _alertBDDRMO,
+                          icon: const Icon(Icons.warning, color: Colors.white),
+                          label: const Text(
+                            "ALERT BDDRMO",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: colorScheme.primary,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 30,
+                              vertical: 14,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 5,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+
+            
                     Expanded(
                       flex: 2,
                       child: Container(
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
-                          color: Theme.of(context).brightness == Brightness.dark
+                          color: Theme.of(context).brightness ==
+                                  Brightness.dark
                               ? Colors.grey[900]
                               : Colors.white,
                           borderRadius: const BorderRadius.only(
@@ -217,9 +335,9 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Device Header
                             Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(
                                   widget.deviceName,
@@ -229,16 +347,11 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                                     color: colorScheme.primary,
                                   ),
                                 ),
-                                const Icon(
-                                  Icons.circle,
-                                  color: Colors.green,
-                                  size: 14,
-                                ),
+                                const Icon(Icons.circle,
+                                    color: Colors.green, size: 14),
                               ],
                             ),
                             const SizedBox(height: 15),
-
-                            // Info Tiles
                             _buildInfoTile(
                               "Room Temperature",
                               "$temperature °C",
@@ -249,12 +362,13 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                               "Smoke Detected",
                               smokeDetected ? "Yes" : "No",
                               Icons.cloud,
-                              smokeDetected ? Colors.orange : Colors.grey,
+                              smokeDetected
+                                  ? Colors.orange
+                                  : Colors.grey,
                             ),
-
-                            // 🔥 Fire Switch Tile
                             Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
                               children: [
                                 Row(
                                   children: [
@@ -300,11 +414,7 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   }
 
   Widget _buildInfoTile(
-    String label,
-    String value,
-    IconData icon,
-    Color iconColor,
-  ) {
+      String label, String value, IconData icon, Color iconColor) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -314,12 +424,14 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
             ),
           ),
           Text(
             value,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            style:
+                const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
         ],
       ),

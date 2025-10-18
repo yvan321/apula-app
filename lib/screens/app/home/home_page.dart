@@ -130,7 +130,7 @@ class _HomePageState extends State<HomePage> {
                 SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    "System is Active\nNo Fire Detected 🔒",
+                    "System is Active\nNo Fire Detected",
                     style: TextStyle(color: Colors.white, fontSize: 16),
                   ),
                 ),
@@ -181,7 +181,7 @@ class _HomePageState extends State<HomePage> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: _availableDevices.isNotEmpty
-                    ? Image.asset("assets/live_preview.jpg", fit: BoxFit.cover)
+                    ? Image.asset("assets/examples/fire_example.jpg", fit: BoxFit.cover)
                     : Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,

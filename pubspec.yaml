@@ -72,6 +72,7 @@ flutter:
     - assets/sounds/fire_alarm.mp3
     - assets/examples/fire_example.jpg
     - assets/examples/profile_pic.jpg
+    - assets/examples/thermal_example.png
 
 
   # The following line ensures that the Material Icons font is

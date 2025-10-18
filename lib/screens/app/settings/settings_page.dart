@@ -1,3 +1,4 @@
+import 'package:apula/screens/app/settings/account_settings_page.dart';
 import 'package:flutter/material.dart';
 import 'package:apula/widgets/custom_bottom_nav.dart';
 import 'package:provider/provider.dart';
@@ -120,11 +121,6 @@ class _SettingsPageState extends State<SettingsPage> {
                             const SizedBox(height: 35),
 
                             // ⚙️ Settings List
-                            _buildSettingsTile(
-                              isDarkMode,
-                              Icons.lock_outline,
-                              "Privacy and Security",
-                            ),
                             _buildThemeModeTile(context),
                             _buildSettingsTile(
                               isDarkMode,
@@ -135,12 +131,23 @@ class _SettingsPageState extends State<SettingsPage> {
                               isDarkMode,
                               Icons.account_circle_outlined,
                               "Account Settings",
+                              onTap: () {
+                                Navigator.pushNamed(
+                                  context,
+                                  '/account_settings',
+                                );
+                              },
                             ),
+
                             _buildSettingsTile(
                               isDarkMode,
                               Icons.info_outline,
                               "About",
+                              onTap: () {
+                                Navigator.pushNamed(context, '/about');
+                              },
                             ),
+
                             _buildSettingsTile(
                               isDarkMode,
                               Icons.logout,
@@ -211,17 +218,39 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ),
 
-      // 🔻 Bottom Navigation
+      // 🔻 Bottom Nav
       bottomNavigationBar: CustomBottomNavBar(
         selectedIndex: _selectedIndex,
-        onItemTapped: (index) {},
+        onItemTapped: _onItemTapped,
         availableDevices: widget.availableDevices,
       ),
     );
   }
 
-  // 🧩 Reusable Settings Tile
-  Widget _buildSettingsTile(bool isDarkMode, IconData icon, String title, {VoidCallback? onTap}) {
+  void _onItemTapped(int index) {
+    setState(() => _selectedIndex = index);
+    switch (index) {
+      case 0:
+        Navigator.pushReplacementNamed(context, '/home');
+        break;
+      case 1:
+        Navigator.pushReplacementNamed(context, '/live');
+        break;
+      case 2:
+        Navigator.pushReplacementNamed(context, '/notifications');
+        break;
+      case 3:
+        break;
+    }
+  }
+
+
+  Widget _buildSettingsTile(
+    bool isDarkMode,
+    IconData icon,
+    String title, {
+    VoidCallback? onTap,
+  }) {
     const redColor = Color(0xFFA30000);
     final tileColor = isDarkMode ? Colors.grey[850] : Colors.white;
     final textColor = isDarkMode ? Colors.white : Colors.black87;

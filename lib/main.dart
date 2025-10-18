@@ -10,6 +10,8 @@ import 'screens/device/devices_info.dart';
 import 'screens/app/home/home_page.dart';
 import 'screens/app/live/livefootage_page.dart';
 import 'screens/app/live/live_camera_view_page.dart';
+import 'screens/app/settings/account_settings_page.dart';
+import 'screens/app/settings/about_page.dart';
 
 void main() {
   runApp(
@@ -96,6 +98,8 @@ class MyApp extends StatelessWidget {
               ModalRoute.of(context)!.settings.arguments as String;
           return LiveCameraViewPage(deviceName: deviceName);
         },
+        '/account_settings': (context) => const AccountSettingsPage(),
+        '/about': (context) => const AboutPage(),
       },
     );
   }
