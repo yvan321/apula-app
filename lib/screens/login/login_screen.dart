@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
 import '../main_screen.dart';
 import '../register/add_device.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // ✅ Added for Firebase login
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -29,6 +30,34 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  // ✅ Firebase Login
+  void _login() async {
+    try {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: usernameController.text.trim(),
+        password: passwordController.text.trim(),
+      );
+
+      _showSnackBar("Login successful", Colors.green);
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const AddDeviceScreen()),
+      );
+    } on FirebaseAuthException catch (e) {
+      String errorMessage;
+      if (e.code == 'user-not-found') {
+        errorMessage = 'No user found for that email.';
+      } else if (e.code == 'wrong-password') {
+        errorMessage = 'Wrong password provided.';
+      } else {
+        errorMessage = 'Login failed: ${e.message}';
+      }
+
+      _showSnackBar(errorMessage, Colors.red);
+    }
+  }
+
   Future<void> _authenticate() async {
     bool authenticated = false;
     try {
@@ -50,19 +79,6 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } else {
       _showSnackBar("Fingerprint login failed", Colors.red);
-    }
-  }
-
-  void _login() {
-    if (usernameController.text == "NEIL" && passwordController.text == "123") {
-      _showSnackBar("Login successful", Colors.green);
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const AddDeviceScreen()),
-      );
-    } else {
-      _showSnackBar("Invalid username or password", Colors.red);
     }
   }
 
@@ -125,7 +141,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     TextField(
                       controller: usernameController,
                       decoration: InputDecoration(
-                        labelText: "Username",
+                        labelText: "Email",
                         labelStyle: TextStyle(color: colorScheme.onSurface),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),

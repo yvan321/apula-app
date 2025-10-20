@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({Key? key}) : super(key: key);
@@ -11,19 +12,14 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   String? selectedCity;
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _contactController = TextEditingController();
 
-  final List<String> cities = ["Las Pinas", "Bacoor"];
-
-  // Mock list of registered emails
-  final List<String> registeredEmails = [
-    "test@gmail.com",
-    "user@gmail.com",
-    "example@gmail.com",
-  ];
+  final List<String> cities = ["Las Piñas", "Bacoor"];
 
   @override
   void dispose() {
     _emailController.dispose();
+    _contactController.dispose();
     super.dispose();
   }
 
@@ -41,11 +37,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  void _register() {
+  Future<void> _register() async {
     final email = _emailController.text.trim();
+    final contact = _contactController.text.trim();
 
-    if (email.isEmpty) {
-      _showSnackBar("Email is required.", Colors.red);
+    if (email.isEmpty || contact.isEmpty) {
+      _showSnackBar("Email and contact number are required.", Colors.red);
       return;
     }
 
@@ -54,61 +51,68 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    if (registeredEmails.contains(email)) {
-      _showSnackBar("Email is already registered.", Colors.red);
-      return;
-    }
-
     if (selectedCity == null) {
       _showSnackBar("Please select a city.", Colors.red);
       return;
     }
 
-    // ✅ Show success dialog instead of just snackbar
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        Future.delayed(const Duration(seconds: 2), () {
-          Navigator.pop(context); // close dialog
-          Navigator.pushReplacementNamed(
-            context,
-            '/verification',
-            arguments: email, 
-          );
-        });
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                height: 200,
-                width: 400,
-                child: Lottie.asset(
-                  'assets/check orange.json', // ✅ add Lottie animation file
-                  repeat: false,
+    try {
+      // ✅ Save user info only (NO password)
+      await FirebaseFirestore.instance.collection('users').add({
+        'email': email,
+        'contact': contact,
+        'city': selectedCity,
+        'role': 'user',
+        'platform': 'mobile',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // ✅ Success animation and message
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          Future.delayed(const Duration(seconds: 2), () {
+            Navigator.pop(context);
+            Navigator.pushReplacementNamed(
+              context,
+              '/verification',
+              arguments: email,
+            );
+          });
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: 200,
+                  width: 400,
+                  child: Lottie.asset(
+                    'assets/check orange.json',
+                    repeat: false,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              Center(
-                child: const Text(
+                const SizedBox(height: 20),
+                const Text(
                   "Check your email for verification code!",
-                  textAlign: TextAlign.center, // ✅ centers multi-line text too
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                     color: Color(0xFFA30000),
                   ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+              ],
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      _showSnackBar("Something went wrong: $e", Colors.red);
+    }
   }
 
   @override
@@ -118,7 +122,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 🔙 Back Button with styling
+            // 🔙 Back Button
             Padding(
               padding: const EdgeInsets.only(left: 10, top: 10),
               child: InkWell(
@@ -126,7 +130,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 borderRadius: BorderRadius.circular(30),
                 child: Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(shape: BoxShape.circle),
+                  decoration: const BoxDecoration(shape: BoxShape.circle),
                   child: Icon(
                     Icons.chevron_left,
                     size: 30,
@@ -143,28 +147,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // ✨ Title
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 100),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 60),
                       child: Text(
                         "Create your account",
                         style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
+                          color: Color(0xFFA30000),
                           fontSize: 30,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
 
-                    // 🔽 Email Field
+                    // 🔽 Email
                     TextField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
                       decoration: InputDecoration(
                         labelText: "Email",
-                        labelStyle: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
@@ -172,14 +172,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // 🔽 City Dropdown
+                    // 🔽 Contact
+                    TextField(
+                      controller: _contactController,
+                      keyboardType: TextInputType.phone,
+                      decoration: InputDecoration(
+                        labelText: "Contact Number",
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // 🔽 City
                     DropdownButtonFormField<String>(
                       value: selectedCity,
                       decoration: InputDecoration(
                         labelText: "Select City",
-                        labelStyle: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
                         border: const OutlineInputBorder(
                           borderRadius: BorderRadius.all(Radius.circular(10)),
                         ),
@@ -188,9 +198,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         return DropdownMenuItem(value: city, child: Text(city));
                       }).toList(),
                       onChanged: (value) {
-                        setState(() {
-                          selectedCity = value;
-                        });
+                        setState(() => selectedCity = value);
                       },
                     ),
                     const Spacer(),
@@ -201,9 +209,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       height: 48,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primary,
+                          backgroundColor:
+                              Theme.of(context).colorScheme.primary,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
                           ),
