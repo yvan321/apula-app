@@ -40,6 +40,12 @@ dependencies:
   cupertino_icons: ^1.0.8
   provider: ^6.1.5+1
 
+  
+  # 🔥 Firebase (fully compatible set for firebase_core 4.2.0)
+  firebase_core: ^4.2.0
+  firebase_auth: ^6.1.1
+  cloud_firestore: ^6.0.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
