@@ -1,6 +1,10 @@
+import 'dart:math';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({Key? key}) : super(key: key);
@@ -10,9 +14,9 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  String? selectedCity;
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _contactController = TextEditingController();
+  String? selectedCity;
 
   final List<String> cities = ["Las Piñas", "Bacoor"];
 
@@ -41,6 +45,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final email = _emailController.text.trim();
     final contact = _contactController.text.trim();
 
+    if (email.toLowerCase().contains("admin")) {
+      _showSnackBar("Admin accounts cannot register in the mobile app.", Colors.red);
+      return;
+    }
+
     if (email.isEmpty || contact.isEmpty) {
       _showSnackBar("Email and contact number are required.", Colors.red);
       return;
@@ -52,65 +61,81 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (selectedCity == null) {
-      _showSnackBar("Please select a city.", Colors.red);
+      _showSnackBar("Please select your city.", Colors.red);
       return;
     }
 
     try {
-      // ✅ Save user info only (NO password)
-      await FirebaseFirestore.instance.collection('users').add({
+      // ✅ Generate a 6-digit code
+      final code = (100000 + Random().nextInt(900000)).toString();
+
+      // ✅ Save to Firestore
+      await FirebaseFirestore.instance.collection('users').doc(email).set({
         'email': email,
         'contact': contact,
         'city': selectedCity,
         'role': 'user',
         'platform': 'mobile',
+        'verificationCode': code,
+        'verified': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // ✅ Success animation and message
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) {
-          Future.delayed(const Duration(seconds: 2), () {
-            Navigator.pop(context);
-            Navigator.pushReplacementNamed(
-              context,
-              '/verification',
-              arguments: email,
-            );
-          });
-          return AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  height: 200,
-                  width: 400,
-                  child: Lottie.asset(
-                    'assets/check orange.json',
-                    repeat: false,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Text(
-                  "Check your email for verification code!",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFFA30000),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+      // ✅ Proper server URL
+      final url = kIsWeb
+          ? Uri.parse("http://localhost:3000/send-verification")
+          : Uri.parse("http://10.0.2.2:3000/send-verification");
+
+      // ✅ Send email
+      final response = await http.post(
+        url,
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"email": email, "code": code}),
       );
+
+      print("Server response: ${response.statusCode} ${response.body}");
+
+      if (response.statusCode == 200) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) {
+            Future.delayed(const Duration(seconds: 2), () {
+              Navigator.pop(context);
+              Navigator.pushReplacementNamed(context, '/verification', arguments: email);
+            });
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: 200,
+                    width: 400,
+                    child: Lottie.asset('assets/check orange.json', repeat: false),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    "Check your email for the verification code!",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFFA30000),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      } else {
+        _showSnackBar("Failed to send verification email.", Colors.red);
+      }
     } catch (e) {
+      print("Error: $e");
       _showSnackBar("Something went wrong: $e", Colors.red);
     }
   }
@@ -140,7 +165,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
             ),
 
-            // 📌 Main Content
+            // 📄 Main Form
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(20),
@@ -159,7 +184,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ),
                     ),
 
-                    // 🔽 Email
+                    // ✉️ Email
                     TextField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
@@ -172,7 +197,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // 🔽 Contact
+                    // 📱 Contact
                     TextField(
                       controller: _contactController,
                       keyboardType: TextInputType.phone,
@@ -185,7 +210,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // 🔽 City
+                    // 📍 City
                     DropdownButtonFormField<String>(
                       value: selectedCity,
                       decoration: InputDecoration(
@@ -201,16 +226,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         setState(() => selectedCity = value);
                       },
                     ),
+
                     const Spacer(),
 
-                    // 🔴 Register Button
+                    // 🔘 Register Button
                     SizedBox(
                       width: double.infinity,
                       height: 48,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor:
-                              Theme.of(context).colorScheme.primary,
+                          backgroundColor: Theme.of(context).colorScheme.primary,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
                           ),

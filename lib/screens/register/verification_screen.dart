@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
 import '../register/setpassword_screen.dart';
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:math';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
 
 enum SnackBarType { success, error, info }
 
@@ -87,13 +92,27 @@ class _VerificationScreenState extends State<VerificationScreen> {
     });
   }
 
-  void _resendCode() {
-    _startTimer();
-    _showSnackBar("Verification code resent.", SnackBarType.info);
-    // TODO: resend code logic
-  }
+  Future<void> _resendCode() async {
+  final newCode = (100000 + Random().nextInt(900000)).toString();
 
-  void _confirmCode() {
+  await FirebaseFirestore.instance
+      .collection('users')
+      .doc(widget.email)
+      .update({'verificationCode': newCode});
+
+  final url = Uri.parse("http://10.0.2.2:5000/send-verification");
+  await http.post(
+    url,
+    headers: {"Content-Type": "application/json"},
+    body: jsonEncode({"email": widget.email, "code": newCode}),
+  );
+
+  _startTimer();
+  _showSnackBar("A new verification code was sent.", SnackBarType.info);
+}
+
+
+  void _confirmCode() async {
   final code = _codeControllers.map((c) => c.text).join();
 
   if (code.length < 6) {
@@ -101,60 +120,73 @@ class _VerificationScreenState extends State<VerificationScreen> {
     return;
   }
 
-  if (code == "123456") {
-    // ✅ Show success dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        Future.delayed(const Duration(seconds: 2), () {
-          Navigator.pop(context); // close dialog
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => SetPasswordScreen(email: widget.email),
+  try {
+    final userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.email)
+        .get();
+
+    if (!userDoc.exists) {
+      _showSnackBar("User not found.", SnackBarType.error);
+      return;
+    }
+
+    final storedCode = userDoc['verificationCode'];
+    if (storedCode == code) {
+  final email = widget.email.toLowerCase();
+
+  if (email.contains("admin")) {
+    _showSnackBar("Admins must register and log in via the web.", SnackBarType.error);
+    return;
+  }
+
+  await FirebaseFirestore.instance
+      .collection('users')
+      .doc(widget.email)
+      .update({'verified': true});
+
+
+      // ✅ Show success and navigate
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          Future.delayed(const Duration(seconds: 2), () {
+            Navigator.pop(context);
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => SetPasswordScreen(email: widget.email),
+              ),
+            );
+          });
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Lottie.asset('assets/check orange.json', repeat: false, height: 200),
+                const SizedBox(height: 20),
+                const Text(
+                  "Verification successful!",
+                  style: TextStyle(
+                    color: Color(0xFFA30000),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
+                ),
+              ],
             ),
           );
-        });
-
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                height: 150,
-                width: 150,
-                child: Lottie.asset(
-                  'assets/check orange.json', // ✅ success animation file
-                  repeat: false,
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                "Email Confirmed!",
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFFA30000),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  } else {
-    _showSnackBar("Invalid code. Try again.", SnackBarType.error);
-
-    // 🔄 Clear OTP fields & refocus to first
-    for (var c in _codeControllers) {
-      c.clear();
+        },
+      );
+    } else {
+      _showSnackBar("Invalid code. Please try again.", SnackBarType.error);
     }
-    FocusScope.of(context).requestFocus(_focusNodes[0]);
+  } catch (e) {
+    _showSnackBar("Error verifying code: $e", SnackBarType.error);
   }
 }
 

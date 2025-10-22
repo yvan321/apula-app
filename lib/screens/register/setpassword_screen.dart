@@ -48,6 +48,13 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
       _showSnackBar("Passwords do not match.", Colors.red);
       return;
     }
+    
+    if (widget.email.toLowerCase().contains("admin")) {
+  _showSnackBar("Admins must create their account via the web dashboard.", Colors.red);
+  return;
+}
+
+
 
     try {
       // 🔥 Create Firebase Auth account here
