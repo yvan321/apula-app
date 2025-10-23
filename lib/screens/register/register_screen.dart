@@ -14,16 +14,17 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _contactController = TextEditingController();
-  String? selectedCity;
-
-  final List<String> cities = ["Las Piñas", "Bacoor"];
+  final TextEditingController _addressController = TextEditingController();
 
   @override
   void dispose() {
+    _nameController.dispose();
     _emailController.dispose();
     _contactController.dispose();
+    _addressController.dispose();
     super.dispose();
   }
 
@@ -42,16 +43,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _register() async {
+    final name = _nameController.text.trim();
     final email = _emailController.text.trim();
     final contact = _contactController.text.trim();
+    final address = _addressController.text.trim();
 
     if (email.toLowerCase().contains("admin")) {
       _showSnackBar("Admin accounts cannot register in the mobile app.", Colors.red);
       return;
     }
 
-    if (email.isEmpty || contact.isEmpty) {
-      _showSnackBar("Email and contact number are required.", Colors.red);
+    if (name.isEmpty || email.isEmpty || contact.isEmpty || address.isEmpty) {
+      _showSnackBar("All fields are required.", Colors.red);
       return;
     }
 
@@ -60,40 +63,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    if (selectedCity == null) {
-      _showSnackBar("Please select your city.", Colors.red);
-      return;
-    }
-
     try {
-      // ✅ Generate a 6-digit code
+      // Generate verification code
       final code = (100000 + Random().nextInt(900000)).toString();
 
-      // ✅ Save to Firestore
-      await FirebaseFirestore.instance.collection('users').doc(email).set({
+      // Save to Firestore (auto ID)
+      await FirebaseFirestore.instance.collection('users').add({
+        'name': name,
         'email': email,
         'contact': contact,
-        'city': selectedCity,
-        'role': 'user',
+        'address': address,
+        'role': 'user', // default
         'platform': 'mobile',
         'verificationCode': code,
         'verified': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // ✅ Proper server URL
+      // Send verification email
       final url = kIsWeb
           ? Uri.parse("http://localhost:3000/send-verification")
           : Uri.parse("http://10.0.2.2:3000/send-verification");
 
-      // ✅ Send email
       final response = await http.post(
         url,
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"email": email, "code": code}),
       );
-
-      print("Server response: ${response.statusCode} ${response.body}");
 
       if (response.statusCode == 200) {
         showDialog(
@@ -184,6 +180,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ),
                     ),
 
+                    // 🧑 Name
+                    TextField(
+                      controller: _nameController,
+                      decoration: InputDecoration(
+                        labelText: "Full Name",
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
                     // ✉️ Email
                     TextField(
                       controller: _emailController,
@@ -210,21 +218,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // 📍 City
-                    DropdownButtonFormField<String>(
-                      value: selectedCity,
+                    // 🏠 Address
+                    TextField(
+                      controller: _addressController,
+                      keyboardType: TextInputType.text,
                       decoration: InputDecoration(
-                        labelText: "Select City",
-                        border: const OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(10)),
+                        labelText: "Address",
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      items: cities.map((city) {
-                        return DropdownMenuItem(value: city, child: Text(city));
-                      }).toList(),
-                      onChanged: (value) {
-                        setState(() => selectedCity = value);
-                      },
                     ),
 
                     const Spacer(),

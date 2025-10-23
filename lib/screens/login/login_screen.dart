@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+// ✅ Import your main and home screens
 import '../main_screen.dart';
 import '../register/add_device.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // ✅ Added for role checking
+import '../app/home/home_page.dart';
+
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -31,31 +35,39 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // ✅ Firebase Login with role check
+  // ✅ Firebase Login with Firestore role check
   Future<void> _login() async {
     try {
-      final email = usernameController.text.trim();
+      final email = usernameController.text.trim().toLowerCase();
       final password = passwordController.text.trim();
+
+      if (email.isEmpty || password.isEmpty) {
+        _showSnackBar("Please enter both email and password.", Colors.red);
+        return;
+      }
 
       // Firebase authentication
       UserCredential userCredential = await FirebaseAuth.instance
           .signInWithEmailAndPassword(email: email, password: password);
 
-      // ✅ Fetch user data from Firestore
-      final userDoc =
-          await FirebaseFirestore.instance.collection('users').doc(email).get();
+      // ✅ Fetch user data by email
+      final query = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
 
-      if (!userDoc.exists) {
+      if (query.docs.isEmpty) {
         await FirebaseAuth.instance.signOut();
         _showSnackBar("User data not found in database.", Colors.red);
         return;
       }
 
-      final userData = userDoc.data();
-      final role = userData?['role'] ?? 'user';
+      final userData = query.docs.first.data();
+      final role = (userData['role'] ?? 'User').toString();
 
       // ✅ Block admin logins on mobile
-      if (role == 'Admin') {
+      if (role.toLowerCase() == 'admin') {
         await FirebaseAuth.instance.signOut();
         _showSnackBar(
           "Admin accounts cannot log in on the mobile app.",
@@ -66,10 +78,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // ✅ Normal user login success
       _showSnackBar("Login successful", Colors.green);
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const AddDeviceScreen()),
-      );
+     Navigator.pushReplacement(
+  context,
+  MaterialPageRoute(builder: (context) => const HomePage()),
+);
+
     } on FirebaseAuthException catch (e) {
       String errorMessage;
       if (e.code == 'user-not-found') {
@@ -85,6 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // ✅ Fingerprint Authentication
   Future<void> _authenticate() async {
     bool authenticated = false;
     try {
@@ -99,7 +113,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (authenticated) {
       _showSnackBar("Fingerprint login successful", Colors.green);
-
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const MainScreen()),
@@ -152,10 +165,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     Text(
                       "Log In",
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,
-                        color: const Color(0xFFA30000),
+                        color: Color(0xFFA30000),
                       ),
                     ),
                     const SizedBox(height: 30),
