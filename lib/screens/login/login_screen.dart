@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+// ✅ Import your main and home screens
 import '../main_screen.dart';
 import '../register/add_device.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // ✅ Added for Firebase login
+import '../app/home/home_page.dart';
+
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -30,20 +35,54 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // ✅ Firebase Login
-  void _login() async {
+  // ✅ Firebase Login with Firestore role check
+  Future<void> _login() async {
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: usernameController.text.trim(),
-        password: passwordController.text.trim(),
-      );
+      final email = usernameController.text.trim().toLowerCase();
+      final password = passwordController.text.trim();
 
+      if (email.isEmpty || password.isEmpty) {
+        _showSnackBar("Please enter both email and password.", Colors.red);
+        return;
+      }
+
+      // Firebase authentication
+      UserCredential userCredential = await FirebaseAuth.instance
+          .signInWithEmailAndPassword(email: email, password: password);
+
+      // ✅ Fetch user data by email
+      final query = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
+
+      if (query.docs.isEmpty) {
+        await FirebaseAuth.instance.signOut();
+        _showSnackBar("User data not found in database.", Colors.red);
+        return;
+      }
+
+      final userData = query.docs.first.data();
+      final role = (userData['role'] ?? 'User').toString();
+
+      // ✅ Block admin logins on mobile
+      if (role.toLowerCase() == 'admin') {
+        await FirebaseAuth.instance.signOut();
+        _showSnackBar(
+          "Admin accounts cannot log in on the mobile app.",
+          Colors.red,
+        );
+        return;
+      }
+
+      // ✅ Normal user login success
       _showSnackBar("Login successful", Colors.green);
+     Navigator.pushReplacement(
+  context,
+  MaterialPageRoute(builder: (context) => const HomePage()),
+);
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const AddDeviceScreen()),
-      );
     } on FirebaseAuthException catch (e) {
       String errorMessage;
       if (e.code == 'user-not-found') {
@@ -53,11 +92,13 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         errorMessage = 'Login failed: ${e.message}';
       }
-
       _showSnackBar(errorMessage, Colors.red);
+    } catch (e) {
+      _showSnackBar("Something went wrong: $e", Colors.red);
     }
   }
 
+  // ✅ Fingerprint Authentication
   Future<void> _authenticate() async {
     bool authenticated = false;
     try {
@@ -72,7 +113,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (authenticated) {
       _showSnackBar("Fingerprint login successful", Colors.green);
-
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const MainScreen()),
@@ -99,7 +139,6 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         child: Stack(
           children: [
-            // 🔥 Logo at the top center
             Align(
               alignment: Alignment.topCenter,
               child: Padding(
@@ -107,8 +146,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Image.asset("assets/logo.png", width: 150),
               ),
             ),
-
-            // ⚪ White container at the bottom
             Align(
               alignment: Alignment.bottomCenter,
               child: Container(
@@ -116,8 +153,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color:
-                      Theme.of(context).dialogTheme.backgroundColor ??
+                  color: Theme.of(context).dialogTheme.backgroundColor ??
                       colorScheme.surface,
                   borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(30),
@@ -129,15 +165,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     Text(
                       "Log In",
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,
-                        color: const Color(0xFFA30000),
+                        color: Color(0xFFA30000),
                       ),
                     ),
                     const SizedBox(height: 30),
-
-                    // Username
                     TextField(
                       controller: usernameController,
                       decoration: InputDecoration(
@@ -149,8 +183,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-
-                    // Password
                     TextField(
                       controller: passwordController,
                       obscureText: true,
@@ -162,10 +194,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 30),
-
-                    // Normal Login Button
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFA30000),
@@ -185,8 +214,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-
-                    // ✨ Modern Fingerprint Login (text only)
                     TextButton(
                       onPressed: () {
                         showDialog(
@@ -210,8 +237,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                       color: Color(0xFFA30000),
                                     ),
                                     const SizedBox(height: 15),
-
-                                    // Title
                                     Text(
                                       "Fingerprint Authentication",
                                       style: textTheme.titleLarge?.copyWith(
@@ -221,8 +246,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                       textAlign: TextAlign.center,
                                     ),
                                     const SizedBox(height: 10),
-
-                                    // Subtitle
                                     Text(
                                       "Place your finger on the sensor to continue",
                                       style: textTheme.bodyMedium?.copyWith(
@@ -232,26 +255,20 @@ class _LoginScreenState extends State<LoginScreen> {
                                       textAlign: TextAlign.center,
                                     ),
                                     const SizedBox(height: 20),
-
-                                    // Authenticate button
                                     ElevatedButton(
                                       style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(
-                                          0xFFA30000,
-                                        ),
-                                        minimumSize: const Size(
-                                          double.infinity,
-                                          45,
-                                        ),
+                                        backgroundColor:
+                                            const Color(0xFFA30000),
+                                        minimumSize:
+                                            const Size(double.infinity, 45),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
                                         ),
                                       ),
                                       onPressed: () {
-                                        Navigator.pop(context); // close dialog
-                                        _authenticate(); // call fingerprint auth
+                                        Navigator.pop(context);
+                                        _authenticate();
                                       },
                                       child: const Text(
                                         "Authenticate",
@@ -262,8 +279,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                     ),
                                     const SizedBox(height: 10),
-
-                                    // Cancel button
                                     TextButton(
                                       onPressed: () {
                                         Navigator.pop(context);
@@ -289,8 +304,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 10),
-
-                    // 🧭 Don't have an account? Sign up
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
