@@ -34,17 +34,15 @@ dependencies:
   lottie: ^3.1.2
   mobile_scanner: ^6.0.2
   audioplayers: ^6.0.0
-
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
+  camera: ^0.10.5+2
+  camera_web: ^0.3.3       # ✅ add this line
+  permission_handler: ^11.3.0
   cupertino_icons: ^1.0.8
   provider: ^6.1.5+1
-
-  
-  # 🔥 Firebase (fully compatible set for firebase_core 4.2.0)
   firebase_core: ^4.2.0
   firebase_auth: ^6.1.1
   cloud_firestore: ^6.0.3
+
 
 dev_dependencies:
   flutter_test:
