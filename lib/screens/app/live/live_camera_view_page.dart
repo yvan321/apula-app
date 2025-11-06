@@ -3,6 +3,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:cloud_firestore/cloud_firestore.dart'; // ✅ Firestore
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../../utils/web_view_registry.dart';
 // ignore: avoid_web_libraries_in_flutter
@@ -19,47 +20,46 @@ class LiveCameraViewPage extends StatefulWidget {
 class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   bool fireDetected = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  final String flaskBaseUrl = "http://192.168.1.8:5000"; // 👈 Your Flask server IP
+  final String flaskBaseUrl = "http://192.168.1.8:5000";
   String _selectedView = "CCTV";
   Timer? _statusTimer;
 
   @override
-void initState() {
-  super.initState();
+  void initState() {
+    super.initState();
 
-  if (kIsWeb) {
-    final registry = getPlatformViewRegistry();
-    registry?.registerViewFactory(
-      'flaskVideoFeed',
-      (int viewId) {
-        final iframe = html.IFrameElement()
-          ..src = "$flaskBaseUrl/video_feed"
-          ..style.border = 'none'
-          ..style.width = '100%'
-          ..style.height = '100%'
-          ..style.objectFit = 'cover'
-          ..style.display = 'block'
-          ..style.margin = '0 auto'
-          ..style.overflow = 'hidden'
-          ..setAttribute('scrolling', 'no') // ✅ safe modern method
-          ..setAttribute('allowfullscreen', 'false')
-          ..allow = 'camera; autoplay';
+    // ✅ Register iframe view for web (CCTV)
+    if (kIsWeb) {
+      final registry = getPlatformViewRegistry();
+      registry?.registerViewFactory(
+        'flaskVideoFeed',
+        (int viewId) {
+          final iframe = html.IFrameElement()
+            ..src = "$flaskBaseUrl/video_feed"
+            ..style.border = 'none'
+            ..style.width = '100%'
+            ..style.height = '100%'
+            ..style.objectFit = 'cover'
+            ..style.display = 'block'
+            ..style.margin = '0 auto'
+            ..style.overflow = 'hidden'
+            ..setAttribute('scrolling', 'no')
+            ..setAttribute('allowfullscreen', 'false')
+            ..allow = 'camera; autoplay';
+          return iframe;
+        },
+      );
+    }
 
-        // ✅ Just ensure the iframe itself hides any scroll
-        iframe.style.overflow = 'hidden';
-        return iframe;
-      },
-    );
+    // 🔁 Check Flask detection every 3 seconds
+    _statusTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      _checkFireStatus();
+    });
   }
 
-  // 🔁 Auto-check Flask fire status every 3s
-  _statusTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-    _checkFireStatus();
-  });
-}
-
-
+  // 🔥 Check Flask detection API
   Future<void> _checkFireStatus() async {
     try {
       final response = await http.get(Uri.parse("$flaskBaseUrl/detect_status"));
@@ -70,6 +70,7 @@ void initState() {
         if (detected && !fireDetected) {
           setState(() => fireDetected = true);
           _triggerFireAlert();
+          _sendFireAlertToFirestore();
         } else if (!detected && fireDetected) {
           setState(() => fireDetected = false);
         }
@@ -79,6 +80,53 @@ void initState() {
     }
   }
 
+  // ✅ Send simulated or real alert to Firestore
+ // ✅ Send simulated or real alert to Firestore (with user info)
+Future<void> _sendFireAlertToFirestore() async {
+  try {
+    // 1️⃣ Get the current user info
+    // Replace this with your actual logged-in user email (from FirebaseAuth)
+    final String currentUserEmail = "alexanderthegreat09071107@gmail.com";
+
+    final userSnapshot = await _firestore
+        .collection('users')
+        .where('email', isEqualTo: currentUserEmail)
+        .limit(1)
+        .get();
+
+    if (userSnapshot.docs.isEmpty) {
+      debugPrint("⚠️ No user found for $currentUserEmail");
+      return;
+    }
+
+    final userData = userSnapshot.docs.first.data();
+    final userName = userData['name'] ?? 'Unknown';
+    final userAddress = userData['address'] ?? 'N/A';
+    final userContact = userData['contact'] ?? 'N/A';
+
+    // 2️⃣ Add Fire alert with user info
+    await _firestore.collection('alerts').add({
+      'type': '🔥 Fire Detected',
+      'location': widget.deviceName,
+      'description':
+          'Fire detected in ${widget.deviceName}. Immediate response needed.',
+      'status': 'Pending',
+      'timestamp': FieldValue.serverTimestamp(),
+      'read': false,
+      'userName': userName,
+      'userAddress': userAddress,
+      'userContact': userContact,
+      'userEmail': currentUserEmail,
+    });
+
+    debugPrint("✅ Fire alert sent to Firestore with user info!");
+  } catch (e) {
+    debugPrint("❌ Failed to send Firestore alert: $e");
+  }
+}
+
+
+  // 🔔 Fire Alert popup
   void _triggerFireAlert() async {
     await _audioPlayer.play(AssetSource('sounds/fire_alarm.mp3'));
     if (!mounted) return;
@@ -115,7 +163,7 @@ void initState() {
           children: [
             const SizedBox(height: 10),
             Text(
-              "The system has detected an active fire in the monitored area.",
+              "A fire has been detected in ${widget.deviceName}.",
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 16,
@@ -169,6 +217,17 @@ void initState() {
     _statusTimer?.cancel();
     _audioPlayer.dispose();
     super.dispose();
+  }
+
+  // 🧠 TEST BUTTON (Manual Fire Alert)
+  void _simulateFire() {
+    setState(() {
+      fireDetected = !fireDetected;
+    });
+    if (fireDetected) {
+      _triggerFireAlert();
+      _sendFireAlertToFirestore();
+    }
   }
 
   @override
@@ -240,13 +299,11 @@ void initState() {
                         },
                         children: const [
                           Padding(
-                            padding:
-                                EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                             child: Text("CCTV"),
                           ),
                           Padding(
-                            padding:
-                                EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                             child: Text("THERMAL"),
                           ),
                         ],
@@ -254,7 +311,7 @@ void initState() {
                     ),
                     const SizedBox(height: 20),
 
-                    // 🎥 Camera Feed
+                    // 🎥 Camera Feed (iframe or placeholder)
                     Expanded(
                       flex: 3,
                       child: Container(
@@ -266,11 +323,7 @@ void initState() {
                         child: _selectedView == "CCTV"
                             ? ClipRRect(
                                 borderRadius: BorderRadius.circular(20),
-                                child: AspectRatio(
-                                  aspectRatio: 4 / 3, // ✅ matches Flask size
-                                  child: const HtmlElementView(
-                                      viewType: 'flaskVideoFeed'),
-                                ),
+                                child: const HtmlElementView(viewType: 'flaskVideoFeed'),
                               )
                             : ClipRRect(
                                 borderRadius: BorderRadius.circular(20),
@@ -284,7 +337,7 @@ void initState() {
 
                     const SizedBox(height: 20),
 
-                    // 🔥 Fire Detection Card
+                    // 🔥 Fire Detection Card + Test Button
                     Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
@@ -325,11 +378,11 @@ void initState() {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Row(
-                                children: [
-                                  const Icon(Icons.local_fire_department,
+                                children: const [
+                                  Icon(Icons.local_fire_department,
                                       color: Colors.red, size: 28),
-                                  const SizedBox(width: 12),
-                                  const Text(
+                                  SizedBox(width: 12),
+                                  Text(
                                     "Fire Detection",
                                     style: TextStyle(
                                       fontSize: 16,
@@ -341,9 +394,23 @@ void initState() {
                               Switch(
                                 value: fireDetected,
                                 activeColor: Colors.red,
-                                onChanged: (_) {},
+                                onChanged: (_) => _simulateFire(), // ✅ test fire
                               ),
                             ],
+                          ),
+                          const SizedBox(height: 10),
+                          ElevatedButton.icon(
+                            onPressed: _simulateFire,
+                            icon: const Icon(Icons.warning, color: Colors.white),
+                            label: const Text("Simulate Fire Alert"),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
                           ),
                         ],
                       ),
