@@ -152,7 +152,8 @@ class _VerificationScreenState extends State<VerificationScreen> {
       final userDoc = query.docs.first;
       final storedCode = userDoc.data()['verificationCode'];
 
-      if (storedCode == code) {
+      if (storedCode.toString() == code.trim())
+      {
         final email = widget.email.toLowerCase();
 
         // 🚫 Prevent admins from using Flutter app
