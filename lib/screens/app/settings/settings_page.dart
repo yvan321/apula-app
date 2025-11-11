@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:apula/widgets/custom_bottom_nav.dart';
 import 'package:provider/provider.dart';
 import 'package:apula/providers/theme_provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class SettingsPage extends StatefulWidget {
   final List<String> availableDevices;
@@ -15,6 +17,59 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   int _selectedIndex = 3;
+  String? _userName;
+  String? _userEmail;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserData();
+  }
+
+  Future<void> _fetchUserData() async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+
+      if (currentUser == null) {
+        setState(() {
+          _userName = "Guest User";
+          _userEmail = "Not logged in";
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final userEmail = currentUser.email;
+      final userSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: userEmail)
+          .limit(1)
+          .get();
+
+      if (userSnapshot.docs.isNotEmpty) {
+        final userData = userSnapshot.docs.first.data();
+        setState(() {
+          _userName = userData['name'] ?? "Unknown";
+          _userEmail = userData['email'] ?? "No email";
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _userName = "Unknown User";
+          _userEmail = userEmail;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print("❌ Error fetching user data: $e");
+      setState(() {
+        _userName = "Error loading user";
+        _userEmail = "";
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,7 +77,6 @@ class _SettingsPageState extends State<SettingsPage> {
     final isDarkMode = themeProvider.isDarkMode;
     const redColor = Color(0xFFA30000);
 
-    // 🌗 Gradient based on theme mode
     final gradientColors = isDarkMode
         ? [Colors.black, redColor]
         : [redColor, Colors.black];
@@ -42,7 +96,7 @@ class _SettingsPageState extends State<SettingsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 🔙 Back button
+              // 🔙 Back Button
               Padding(
                 padding: const EdgeInsets.only(left: 10, top: 10),
                 child: InkWell(
@@ -74,7 +128,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 50),
 
-              // ⚪ Rounded container
+              // ⚪ Rounded Container
               Expanded(
                 child: Stack(
                   clipBehavior: Clip.none,
@@ -99,25 +153,33 @@ class _SettingsPageState extends State<SettingsPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            // 🧍 Name and Email
-                            Text(
-                              "Naruto Uzumaki",
-                              style: TextStyle(
-                                color: redColor,
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              "naruto@gmail.com",
-                              style: TextStyle(
-                                color: isDarkMode
-                                    ? Colors.grey[400]
-                                    : Colors.grey[600],
-                                fontSize: 14,
-                              ),
-                            ),
+                            // 🧍 User Info
+                            _isLoading
+                                ? const CircularProgressIndicator(
+                                    color: redColor,
+                                  )
+                                : Column(
+                                    children: [
+                                      Text(
+                                        _userName ?? "Unknown User",
+                                        style: const TextStyle(
+                                          color: redColor,
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _userEmail ?? "",
+                                        style: TextStyle(
+                                          color: isDarkMode
+                                              ? Colors.grey[400]
+                                              : Colors.grey[600],
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                             const SizedBox(height: 35),
 
                             // ⚙️ Settings List
@@ -126,33 +188,33 @@ class _SettingsPageState extends State<SettingsPage> {
                               isDarkMode,
                               Icons.notifications_none_outlined,
                               "Notifications",
+                              onTap: () => Navigator.pushNamed(
+                                context,
+                                '/notifsettings_page',
+                              ),
                             ),
                             _buildSettingsTile(
                               isDarkMode,
                               Icons.account_circle_outlined,
                               "Account Settings",
-                              onTap: () {
-                                Navigator.pushNamed(
-                                  context,
-                                  '/account_settings',
-                                );
-                              },
+                              onTap: () => Navigator.pushNamed(
+                                context,
+                                '/account_settings',
+                              ),
                             ),
-
                             _buildSettingsTile(
                               isDarkMode,
                               Icons.info_outline,
                               "About",
-                              onTap: () {
-                                Navigator.pushNamed(context, '/about');
-                              },
+                              onTap: () =>
+                                  Navigator.pushNamed(context, '/about'),
                             ),
-
                             _buildSettingsTile(
                               isDarkMode,
                               Icons.logout,
                               "Log Out",
                               onTap: () {
+                                FirebaseAuth.instance.signOut();
                                 Navigator.pushNamedAndRemoveUntil(
                                   context,
                                   '/login',
@@ -165,7 +227,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
 
-                    // 👤 Profile picture overlapping top section
+                    // 👤 Profile Picture
                     Positioned(
                       top: -55,
                       left: 0,
@@ -202,7 +264,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                 child: const Icon(
                                   Icons.edit,
                                   size: 18,
-                                  color: Color(0xFFA30000),
+                                  color: redColor,
                                 ),
                               ),
                             ),
@@ -243,7 +305,6 @@ class _SettingsPageState extends State<SettingsPage> {
         break;
     }
   }
-
 
   Widget _buildSettingsTile(
     bool isDarkMode,
@@ -295,7 +356,6 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // 🌙 Theme Mode Tile with Switch
   Widget _buildThemeModeTile(BuildContext context) {
     const redColor = Color(0xFFA30000);
     final themeProvider = Provider.of<ThemeProvider>(context);
@@ -342,7 +402,7 @@ class _SettingsPageState extends State<SettingsPage> {
           value: isDarkMode,
           activeColor: redColor,
           onChanged: (value) {
-            themeProvider.toggleTheme(value); // ✅ updates whole app
+            themeProvider.toggleTheme(value);
           },
         ),
       ),

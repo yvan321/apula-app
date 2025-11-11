@@ -15,6 +15,7 @@ import 'screens/app/live/livefootage_page.dart';
 import 'screens/app/live/live_camera_view_page.dart';
 import 'screens/app/settings/account_settings_page.dart';
 import 'screens/app/settings/about_page.dart';
+import 'screens/app/settings/notifsetting_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -75,6 +76,9 @@ class MyApp extends StatelessWidget {
         },
         '/account_settings': (context) => const AccountSettingsPage(),
         '/about': (context) => const AboutPage(),
+        '/notifsettings_page': (context) => const NotifSettingsPage(),
+
+
       },
     );
   }

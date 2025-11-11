@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:apula/utils/network_config.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({Key? key}) : super(key: key);
@@ -49,7 +50,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final address = _addressController.text.trim();
 
     if (email.toLowerCase().contains("admin")) {
-      _showSnackBar("Admin accounts cannot register in the mobile app.", Colors.red);
+      _showSnackBar(
+        "Admin accounts cannot register in the mobile app.",
+        Colors.red,
+      );
       return;
     }
 
@@ -96,7 +100,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
           builder: (context) {
             Future.delayed(const Duration(seconds: 2), () {
               Navigator.pop(context);
-              Navigator.pushReplacementNamed(context, '/verification', arguments: email);
+              Navigator.pushReplacementNamed(
+                context,
+                '/verification',
+                arguments: email,
+              );
             });
             return AlertDialog(
               shape: RoundedRectangleBorder(
@@ -108,7 +116,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   SizedBox(
                     height: 200,
                     width: 400,
-                    child: Lottie.asset('assets/check orange.json', repeat: false),
+                    child: Lottie.asset(
+                      'assets/check orange.json',
+                      repeat: false,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   const Text(
@@ -161,7 +172,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
             // 📄 Main Form
             Expanded(
-              child: Padding(
+              child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -227,8 +238,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ),
                     ),
-
-                    const Spacer(),
+                    const SizedBox(height: 30),
 
                     // 🔘 Register Button
                     SizedBox(
@@ -236,7 +246,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       height: 48,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).colorScheme.primary,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
                           ),

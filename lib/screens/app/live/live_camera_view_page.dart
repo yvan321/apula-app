@@ -5,9 +5,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart'; // ✅ Firestore
 import 'package:flutter/foundation.dart' show kIsWeb;
-import '../../../utils/web_view_registry.dart';
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html;
+
+// ⛔ REMOVE THESE imports completely!
+// import '../../../utils/web_view_registry.dart';
+// import 'dart:html' as html;
 
 class LiveCameraViewPage extends StatefulWidget {
   final String deviceName;
@@ -30,28 +31,7 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   void initState() {
     super.initState();
 
-    // ✅ Register iframe view for web (CCTV)
-    if (kIsWeb) {
-      final registry = getPlatformViewRegistry();
-      registry?.registerViewFactory(
-        'flaskVideoFeed',
-        (int viewId) {
-          final iframe = html.IFrameElement()
-            ..src = "$flaskBaseUrl/video_feed"
-            ..style.border = 'none'
-            ..style.width = '100%'
-            ..style.height = '100%'
-            ..style.objectFit = 'cover'
-            ..style.display = 'block'
-            ..style.margin = '0 auto'
-            ..style.overflow = 'hidden'
-            ..setAttribute('scrolling', 'no')
-            ..setAttribute('allowfullscreen', 'false')
-            ..allow = 'camera; autoplay';
-          return iframe;
-        },
-      );
-    }
+
 
     // 🔁 Check Flask detection every 3 seconds
     _statusTimer = Timer.periodic(const Duration(seconds: 3), (_) {
@@ -81,50 +61,49 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   }
 
   // ✅ Send simulated or real alert to Firestore
- // ✅ Send simulated or real alert to Firestore (with user info)
-Future<void> _sendFireAlertToFirestore() async {
-  try {
-    // 1️⃣ Get the current user info
-    // Replace this with your actual logged-in user email (from FirebaseAuth)
-    final String currentUserEmail = "alexanderthegreat09071107@gmail.com";
+  // ✅ Send simulated or real alert to Firestore (with user info)
+  Future<void> _sendFireAlertToFirestore() async {
+    try {
+      // 1️⃣ Get the current user info
+      // Replace this with your actual logged-in user email (from FirebaseAuth)
+      final String currentUserEmail = "alexanderthegreat09071107@gmail.com";
 
-    final userSnapshot = await _firestore
-        .collection('users')
-        .where('email', isEqualTo: currentUserEmail)
-        .limit(1)
-        .get();
+      final userSnapshot = await _firestore
+          .collection('users')
+          .where('email', isEqualTo: currentUserEmail)
+          .limit(1)
+          .get();
 
-    if (userSnapshot.docs.isEmpty) {
-      debugPrint("⚠️ No user found for $currentUserEmail");
-      return;
+      if (userSnapshot.docs.isEmpty) {
+        debugPrint("⚠️ No user found for $currentUserEmail");
+        return;
+      }
+
+      final userData = userSnapshot.docs.first.data();
+      final userName = userData['name'] ?? 'Unknown';
+      final userAddress = userData['address'] ?? 'N/A';
+      final userContact = userData['contact'] ?? 'N/A';
+
+      // 2️⃣ Add Fire alert with user info
+      await _firestore.collection('alerts').add({
+        'type': '🔥 Fire Detected',
+        'location': widget.deviceName,
+        'description':
+            'Fire detected in ${widget.deviceName}. Immediate response needed.',
+        'status': 'Pending',
+        'timestamp': FieldValue.serverTimestamp(),
+        'read': false,
+        'userName': userName,
+        'userAddress': userAddress,
+        'userContact': userContact,
+        'userEmail': currentUserEmail,
+      });
+
+      debugPrint("✅ Fire alert sent to Firestore with user info!");
+    } catch (e) {
+      debugPrint("❌ Failed to send Firestore alert: $e");
     }
-
-    final userData = userSnapshot.docs.first.data();
-    final userName = userData['name'] ?? 'Unknown';
-    final userAddress = userData['address'] ?? 'N/A';
-    final userContact = userData['contact'] ?? 'N/A';
-
-    // 2️⃣ Add Fire alert with user info
-    await _firestore.collection('alerts').add({
-      'type': '🔥 Fire Detected',
-      'location': widget.deviceName,
-      'description':
-          'Fire detected in ${widget.deviceName}. Immediate response needed.',
-      'status': 'Pending',
-      'timestamp': FieldValue.serverTimestamp(),
-      'read': false,
-      'userName': userName,
-      'userAddress': userAddress,
-      'userContact': userContact,
-      'userEmail': currentUserEmail,
-    });
-
-    debugPrint("✅ Fire alert sent to Firestore with user info!");
-  } catch (e) {
-    debugPrint("❌ Failed to send Firestore alert: $e");
   }
-}
-
 
   // 🔔 Fire Alert popup
   void _triggerFireAlert() async {
@@ -144,8 +123,11 @@ Future<void> _sendFireAlertToFirestore() async {
         title: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.local_fire_department_rounded,
-                color: theme.colorScheme.primary, size: 60),
+            Icon(
+              Icons.local_fire_department_rounded,
+              color: theme.colorScheme.primary,
+              size: 60,
+            ),
             const SizedBox(height: 12),
             Text(
               "🔥 FIRE DETECTED",
@@ -183,8 +165,10 @@ Future<void> _sendFireAlertToFirestore() async {
             ),
           ],
         ),
-        actionsPadding:
-            const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+        actionsPadding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 20,
+        ),
         actionsAlignment: MainAxisAlignment.center,
         actions: [
           ElevatedButton.icon(
@@ -195,13 +179,14 @@ Future<void> _sendFireAlertToFirestore() async {
             icon: const Icon(Icons.check, color: Colors.white),
             label: const Text(
               "OK",
-              style:
-                  TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             style: ElevatedButton.styleFrom(
               backgroundColor: theme.colorScheme.primary,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -289,21 +274,26 @@ Future<void> _sendFireAlertToFirestore() async {
                         selectedColor: colorScheme.primary,
                         isSelected: [
                           _selectedView == "CCTV",
-                          _selectedView == "THERMAL"
+                          _selectedView == "THERMAL",
                         ],
                         onPressed: (index) {
                           setState(() {
-                            _selectedView =
-                                index == 0 ? "CCTV" : "THERMAL";
+                            _selectedView = index == 0 ? "CCTV" : "THERMAL";
                           });
                         },
                         children: const [
                           Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 8,
+                            ),
                             child: Text("CCTV"),
                           ),
                           Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 8,
+                            ),
                             child: Text("THERMAL"),
                           ),
                         ],
@@ -321,16 +311,33 @@ Future<void> _sendFireAlertToFirestore() async {
                         ),
                         clipBehavior: Clip.hardEdge,
                         child: _selectedView == "CCTV"
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(20),
-                                child: const HtmlElementView(viewType: 'flaskVideoFeed'),
-                              )
-                            : ClipRRect(
-                                borderRadius: BorderRadius.circular(20),
-                                child: Image.asset(
-                                  'assets/examples/thermal_example.png',
-                                  fit: BoxFit.cover,
-                                ),
+                            ? (kIsWeb
+                                  ? const HtmlElementView(
+                                      viewType: 'flaskVideoFeed',
+                                    ) // ✅ For web
+                                  : Image.network(
+                                      // ✅ For phone: directly show Flask stream image
+                                      "http://192.168.1.8:5000/video_feed",
+                                      fit: BoxFit.cover,
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              const Center(
+                                                child: Text(
+                                                  "Unable to load live feed",
+                                                  style: TextStyle(
+                                                    color: Color.fromARGB(
+                                                      179,
+                                                      212,
+                                                      151,
+                                                      151,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                    ))
+                            : Image.asset(
+                                'assets/examples/thermal_example.png',
+                                fit: BoxFit.cover,
                               ),
                       ),
                     ),
@@ -369,8 +376,11 @@ Future<void> _sendFireAlertToFirestore() async {
                                   color: colorScheme.primary,
                                 ),
                               ),
-                              const Icon(Icons.circle,
-                                  color: Colors.green, size: 14),
+                              const Icon(
+                                Icons.circle,
+                                color: Colors.green,
+                                size: 14,
+                              ),
                             ],
                           ),
                           const SizedBox(height: 15),
@@ -379,8 +389,11 @@ Future<void> _sendFireAlertToFirestore() async {
                             children: [
                               Row(
                                 children: const [
-                                  Icon(Icons.local_fire_department,
-                                      color: Colors.red, size: 28),
+                                  Icon(
+                                    Icons.local_fire_department,
+                                    color: Colors.red,
+                                    size: 28,
+                                  ),
                                   SizedBox(width: 12),
                                   Text(
                                     "Fire Detection",
@@ -394,19 +407,25 @@ Future<void> _sendFireAlertToFirestore() async {
                               Switch(
                                 value: fireDetected,
                                 activeColor: Colors.red,
-                                onChanged: (_) => _simulateFire(), // ✅ test fire
+                                onChanged: (_) =>
+                                    _simulateFire(), // ✅ test fire
                               ),
                             ],
                           ),
                           const SizedBox(height: 10),
                           ElevatedButton.icon(
                             onPressed: _simulateFire,
-                            icon: const Icon(Icons.warning, color: Colors.white),
+                            icon: const Icon(
+                              Icons.warning,
+                              color: Colors.white,
+                            ),
                             label: const Text("Simulate Fire Alert"),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.red,
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 20, vertical: 12),
+                                horizontal: 20,
+                                vertical: 12,
+                              ),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
@@ -425,3 +444,5 @@ Future<void> _sendFireAlertToFirestore() async {
     );
   }
 }
+
+

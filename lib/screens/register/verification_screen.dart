@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:apula/utils/network_config.dart';
 
 enum SnackBarType { success, error, info }
 
@@ -18,8 +19,10 @@ class VerificationScreen extends StatefulWidget {
 }
 
 class _VerificationScreenState extends State<VerificationScreen> {
-  final List<TextEditingController> _codeControllers =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _codeControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
 
   Timer? _timer;
@@ -107,13 +110,14 @@ class _VerificationScreenState extends State<VerificationScreen> {
     final userDoc = query.docs.first;
 
     // Update code in Firestore
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(userDoc.id)
-        .update({'verificationCode': newCode});
+    await FirebaseFirestore.instance.collection('users').doc(userDoc.id).update(
+      {'verificationCode': newCode},
+    );
 
     // Send the new code via backend API
-    final url = Uri.parse("http://10.0.2.2:5000/send-verification");
+    final baseUrl = await getBaseUrl();
+    final url = Uri.parse("$baseUrl/send-verification");
+
     await http.post(
       url,
       headers: {"Content-Type": "application/json"},
@@ -148,13 +152,16 @@ class _VerificationScreenState extends State<VerificationScreen> {
       final userDoc = query.docs.first;
       final storedCode = userDoc.data()['verificationCode'];
 
-      if (storedCode == code) {
+      if (storedCode.toString() == code.trim())
+      {
         final email = widget.email.toLowerCase();
 
         // 🚫 Prevent admins from using Flutter app
         if (email.contains("admin")) {
           _showSnackBar(
-              "Admins must register and log in via the web.", SnackBarType.error);
+            "Admins must register and log in via the web.",
+            SnackBarType.error,
+          );
           return;
         }
 
@@ -174,8 +181,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
               Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(
-                  builder: (context) =>
-                      SetPasswordScreen(email: widget.email),
+                  builder: (context) => SetPasswordScreen(email: widget.email),
                 ),
               );
             });
@@ -186,8 +192,11 @@ class _VerificationScreenState extends State<VerificationScreen> {
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Lottie.asset('assets/check orange.json',
-                      repeat: false, height: 200),
+                  Lottie.asset(
+                    'assets/check orange.json',
+                    repeat: false,
+                    height: 200,
+                  ),
                   const SizedBox(height: 20),
                   const Text(
                     "Verification successful!",
@@ -237,13 +246,11 @@ class _VerificationScreenState extends State<VerificationScreen> {
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide:
-                const BorderSide(color: Color(0xFFA30000), width: 2),
+            borderSide: const BorderSide(color: Color(0xFFA30000), width: 2),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide:
-                const BorderSide(color: Color(0xFFA30000), width: 2),
+            borderSide: const BorderSide(color: Color(0xFFA30000), width: 2),
           ),
         ),
         onChanged: (value) {
@@ -291,8 +298,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
                     ),
                     RichText(
                       text: TextSpan(
-                        style:
-                            TextStyle(fontSize: 16, color: Colors.grey[600]),
+                        style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                         children: [
                           const TextSpan(text: "We’ve sent a 6-digit code to "),
                           TextSpan(
@@ -311,8 +317,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
                     // OTP FIELDS 🔢
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children:
-                          List.generate(6, (index) => _buildCodeField(index)),
+                      children: List.generate(
+                        6,
+                        (index) => _buildCodeField(index),
+                      ),
                     ),
 
                     const Spacer(),
@@ -320,8 +328,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
                       width: double.infinity,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 15),
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary,
+                          padding: const EdgeInsets.symmetric(vertical: 15),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
