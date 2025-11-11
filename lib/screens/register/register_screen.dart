@@ -85,8 +85,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       });
 
       // Send verification email
-      final baseUrl = await getBaseUrl();
-      final url = Uri.parse("$baseUrl/send-verification");
+      final url = Uri.parse("http://localhost:3000/send-verification");
 
       final response = await http.post(
         url,

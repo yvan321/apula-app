@@ -36,67 +36,75 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ✅ Firebase Login with Firestore role check
-  Future<void> _login() async {
-    try {
-      final email = usernameController.text.trim().toLowerCase();
-      final password = passwordController.text.trim();
+ // ✅ Firebase Login with Firestore role check
+Future<void> _login() async {
+  try {
+    final email = usernameController.text.trim().toLowerCase();
+    final password = passwordController.text.trim();
 
-      if (email.isEmpty || password.isEmpty) {
-        _showSnackBar("Please enter both email and password.", Colors.red);
-        return;
-      }
-
-      // Firebase authentication
-      UserCredential userCredential = await FirebaseAuth.instance
-          .signInWithEmailAndPassword(email: email, password: password);
-
-      // ✅ Fetch user data by email
-      final query = await FirebaseFirestore.instance
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .limit(1)
-          .get();
-
-      if (query.docs.isEmpty) {
-        await FirebaseAuth.instance.signOut();
-        _showSnackBar("User data not found in database.", Colors.red);
-        return;
-      }
-
-      final userData = query.docs.first.data();
-      final role = (userData['role'] ?? 'User').toString();
-
-      // ✅ Block admin logins on mobile
-      if (role.toLowerCase() == 'admin') {
-        await FirebaseAuth.instance.signOut();
-        _showSnackBar(
-          "Admin accounts cannot log in on the mobile app.",
-          Colors.red,
-        );
-        return;
-      }
-
-      // ✅ Normal user login success
-      _showSnackBar("Login successful", Colors.green);
-     Navigator.pushReplacement(
-  context,
-  MaterialPageRoute(builder: (context) => const HomePage()),
-);
-
-    } on FirebaseAuthException catch (e) {
-      String errorMessage;
-      if (e.code == 'user-not-found') {
-        errorMessage = 'No user found for that email.';
-      } else if (e.code == 'wrong-password') {
-        errorMessage = 'Wrong password provided.';
-      } else {
-        errorMessage = 'Login failed: ${e.message}';
-      }
-      _showSnackBar(errorMessage, Colors.red);
-    } catch (e) {
-      _showSnackBar("Something went wrong: $e", Colors.red);
+    if (email.isEmpty || password.isEmpty) {
+      _showSnackBar("Please enter both email and password.", Colors.red);
+      return;
     }
+
+    // Firebase authentication
+    UserCredential userCredential = await FirebaseAuth.instance
+        .signInWithEmailAndPassword(email: email, password: password);
+
+    // ✅ Fetch user data by email
+    final query = await FirebaseFirestore.instance
+        .collection('users')
+        .where('email', isEqualTo: email)
+        .limit(1)
+        .get();
+
+    if (query.docs.isEmpty) {
+      await FirebaseAuth.instance.signOut();
+      _showSnackBar("User data not found in database.", Colors.red);
+      return;
+    }
+
+    final userData = query.docs.first.data();
+    final role = (userData['role'] ?? 'User').toString().toLowerCase();
+
+    // 🚫 Block responders and admins
+    if (role != 'user') {
+      await FirebaseAuth.instance.signOut();
+      _showSnackBar(
+        "Only regular users can log in here.",
+        Colors.red,
+      );
+      return;
+    }
+
+    // ✅ Check if verified before allowing login
+    if (userData['verified'] != true) {
+      await FirebaseAuth.instance.signOut();
+      _showSnackBar("Please verify your account first.", Colors.red);
+      return;
+    }
+
+    // ✅ Successful login
+    _showSnackBar("Login successful", Colors.green);
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const HomePage()),
+    );
+
+  } on FirebaseAuthException catch (e) {
+    String errorMessage;
+    if (e.code == 'user-not-found') {
+      errorMessage = 'No user found for that email.';
+    } else if (e.code == 'wrong-password') {
+      errorMessage = 'Wrong password provided.';
+    } else {
+      errorMessage = 'Login failed: ${e.message}';
+    }
+    _showSnackBar(errorMessage, Colors.red);
+  } catch (e) {
+    _showSnackBar("Something went wrong: $e", Colors.red);
   }
+}
 
   // ✅ Fingerprint Authentication
   Future<void> _authenticate() async {
