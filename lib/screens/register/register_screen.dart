@@ -85,7 +85,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       });
 
       // Send verification email
-      final url = Uri.parse("http://localhost:3000/send-verification");
+      final url = Uri.parse("http://localhost:3007/send-verification");
 
       final response = await http.post(
         url,
