@@ -21,14 +21,13 @@ class LiveCameraViewPage extends StatefulWidget {
 
 class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   bool fireDetected = false;
-  bool loading = true;               // ⭐ For loading spinner
-  bool isFullscreen = false;         // ⭐ For fullscreen toggle
+  bool loading = true;
+  bool isFullscreen = false;
 
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // change this to your Flask server IP address
-  final String flaskBaseUrl = "http://192.168.1.6:5000";
+  final String flaskBaseUrl = "http://10.238.220.202:5000";
 
   String _selectedView = "CCTV";
   Timer? _statusTimer;
@@ -37,7 +36,6 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   void initState() {
     super.initState();
 
-    // Simulate load delay for spinner when MJPEG loads
     Future.delayed(const Duration(seconds: 1), () {
       setState(() => loading = false);
     });
@@ -69,19 +67,17 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
 
   Future<void> _sendFireAlertToFirestore() async {
     try {
-      const email = "alexanderthegreat09071107@gmail.com";
+      const String email = "alexanderthegreat09071107@gmail.com";
 
-      final userSnapshot = await _firestore
+      final snapshot = await _firestore
           .collection('users')
           .where('email', isEqualTo: email)
           .limit(1)
           .get();
 
-      if (userSnapshot.docs.isEmpty) {
-        return;
-      }
+      if (snapshot.docs.isEmpty) return;
 
-      final user = userSnapshot.docs.first.data();
+      final user = snapshot.docs.first.data();
 
       await _firestore.collection('alerts').add({
         'type': '🔥 Fire Detected',
@@ -107,6 +103,7 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
+        backgroundColor: Colors.white,
         title: Column(
           children: const [
             Icon(Icons.local_fire_department, color: Colors.red, size: 60),
@@ -141,25 +138,24 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Colors.white, // ⭐ EVERYTHING WHITE
       body: SafeArea(
         child: Stack(
           children: [
             Column(
               children: [
                 if (!isFullscreen)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Padding(
-                      padding: const EdgeInsets.all(10),
-                      child: InkWell(
-                        onTap: () => Navigator.pop(context),
-                        child: Icon(Icons.chevron_left,
-                            size: 32, color: colorScheme.primary),
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Row(
+                      children: [
+                        InkWell(
+                          onTap: () => Navigator.pop(context),
+                          child: const Icon(Icons.chevron_left,
+                              size: 32, color: Colors.black),
+                        ),
+                      ],
                     ),
                   ),
 
@@ -169,32 +165,52 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                     child: Column(
                       children: [
                         if (!isFullscreen) ...[
-                          Text("Live Footage",
-                              style: TextStyle(
-                                  fontSize: 28,
-                                  color: colorScheme.primary,
-                                  fontWeight: FontWeight.bold)),
+                          const Text(
+                            "Live Footage",
+                            style: TextStyle(
+                                fontSize: 28,
+                                color: Colors.black,
+                                fontWeight: FontWeight.bold),
+                          ),
                           const SizedBox(height: 10),
                         ],
 
-                        // 💡 Fullscreen Toggle
+                        // ⭐ CCTV / THERMAL BUTTONS
                         if (!isFullscreen)
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: IconButton(
-                              icon: const Icon(Icons.fullscreen, size: 30),
-                              color: Colors.white,
-                              onPressed: () {
-                                setState(() => isFullscreen = true);
-                              },
-                            ),
+                          ToggleButtons(
+                            borderRadius: BorderRadius.circular(12),
+                            isSelected: [
+                              _selectedView == "CCTV",
+                              _selectedView == "THERMAL",
+                            ],
+                            onPressed: (index) {
+                              setState(() {
+                                _selectedView = index == 0 ? "CCTV" : "THERMAL";
+                              });
+                            },
+                            children: const [
+                              Padding(
+                                padding:
+                                    EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                                child: Text("CCTV",
+                                    style: TextStyle(color: Colors.black)),
+                              ),
+                              Padding(
+                                padding:
+                                    EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                                child: Text("THERMAL",
+                                    style: TextStyle(color: Colors.black)),
+                              ),
+                            ],
                           ),
 
-                        // 🔥 CAMERA VIEW
+                        if (!isFullscreen) const SizedBox(height: 20),
+
+                        // ⭐ CAMERA VIEW AREA
                         Expanded(
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.black,
+                              color: Colors.white, // ⭐ CAMERA FRAME = WHITE
                               borderRadius: isFullscreen
                                   ? BorderRadius.zero
                                   : BorderRadius.circular(20),
@@ -204,27 +220,36 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                               children: [
                                 _selectedView == "CCTV"
                                     ? (kIsWeb
-                                        ? MjpegView(
-                                            url:
-                                                "$flaskBaseUrl/video_feed") // Web
+                                        ? MjpegView(url: "$flaskBaseUrl/video_feed")
                                         : Image.network(
                                             "$flaskBaseUrl/video_feed",
                                             fit: BoxFit.cover,
-                                          )) // Android/iOS
+                                          ))
                                     : Image.asset(
                                         "assets/examples/thermal_example.png",
                                         fit: BoxFit.cover,
                                       ),
 
-                                // ⭐ LOADING SPINNER ⭐
                                 if (loading)
                                   const Center(
                                     child: CircularProgressIndicator(
-                                      color: Colors.white,
+                                      color: Colors.black,
                                     ),
                                   ),
 
-                                // Minimize button in fullscreen
+                                if (!isFullscreen)
+                                  Positioned(
+                                    top: 10,
+                                    right: 10,
+                                    child: IconButton(
+                                      icon: const Icon(Icons.fullscreen,
+                                          color: Colors.black, size: 30),
+                                      onPressed: () {
+                                        setState(() => isFullscreen = true);
+                                      },
+                                    ),
+                                  ),
+
                                 if (isFullscreen)
                                   Positioned(
                                     top: 20,
@@ -232,7 +257,7 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                                     child: IconButton(
                                       icon: const Icon(
                                         Icons.fullscreen_exit,
-                                        color: Colors.white,
+                                        color: Colors.black,
                                         size: 32,
                                       ),
                                       onPressed: () {
@@ -253,6 +278,13 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.1),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 3),
+                                )
+                              ],
                             ),
                             child: Row(
                               mainAxisAlignment:
@@ -264,7 +296,9 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                                         color: Colors.red, size: 30),
                                     SizedBox(width: 10),
                                     Text("Fire Detection",
-                                        style: TextStyle(fontSize: 18)),
+                                        style: TextStyle(
+                                            fontSize: 18,
+                                            color: Colors.black)),
                                   ],
                                 ),
                                 Switch(
