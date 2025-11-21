@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:apula/screens/register/map_picker.dart';
 
 class AccountSettingsPage extends StatefulWidget {
   const AccountSettingsPage({super.key});
@@ -21,7 +22,10 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   final _firestore = FirebaseFirestore.instance;
 
   bool _isLoading = true;
-  String? _docId; // 🔹 store document ID
+  String? _docId;
+
+  double? selectedLat;
+  double? selectedLng;
 
   @override
   void initState() {
@@ -29,7 +33,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     _loadUserData();
   }
 
-  // 🟢 Load user data by email (not UID)
+  // 🟢 Load user data
   Future<void> _loadUserData() async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -47,11 +51,14 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       if (query.docs.isNotEmpty) {
         final doc = query.docs.first;
         final data = doc.data();
-        _docId = doc.id; // save doc id for updating later
+        _docId = doc.id;
 
         _nameController.text = data['name'] ?? '';
         _contactController.text = data['contact'] ?? '';
         _addressController.text = data['address'] ?? '';
+
+        selectedLat = data['latitude'];
+        selectedLng = data['longitude'];
       } else {
         _showSnackBar("User not found in database.", Colors.red);
       }
@@ -100,22 +107,21 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       final user = _auth.currentUser;
       if (user == null || _docId == null) return;
 
-      // ✅ Update Firestore document
       await _firestore.collection('users').doc(_docId).update({
         'name': name,
         'contact': contact,
         'address': address,
+        'latitude': selectedLat,
+        'longitude': selectedLng,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // ✅ Update password in Firebase Auth
       if (password.isNotEmpty) {
         await user.updatePassword(password);
       }
 
-      Navigator.pop(context); // close loading dialog
+      Navigator.pop(context);
 
-      // ✅ Success dialog
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -156,7 +162,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     );
   }
 
-  // ✅ Success dialog
   Widget _successDialog(String message) {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -196,31 +201,19 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     return Scaffold(
       body: SafeArea(
         child: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(color: Color(0xFFA30000)),
-              )
+            ? const Center(child: CircularProgressIndicator(color: Color(0xFFA30000)))
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 🔙 Back Button
+                  // Back Button
                   Padding(
                     padding: const EdgeInsets.only(left: 10, top: 10),
                     child: InkWell(
                       onTap: () => Navigator.pop(context),
-                      borderRadius: BorderRadius.circular(30),
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: const BoxDecoration(shape: BoxShape.circle),
-                        child: Icon(
-                          Icons.chevron_left,
-                          size: 30,
-                          color: colorScheme.primary,
-                        ),
-                      ),
+                      child: const Icon(Icons.chevron_left, size: 30),
                     ),
                   ),
 
-                  // 🏷️ Title
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
                     child: Text(
@@ -233,7 +226,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                     ),
                   ),
 
-                  // 📋 Form Fields
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.all(20),
@@ -242,55 +234,51 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                           children: [
                             TextField(
                               controller: _nameController,
-                              decoration: InputDecoration(
-                                labelText: "Name",
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
+                              decoration: _input("Name"),
                             ),
                             const SizedBox(height: 20),
                             TextField(
                               controller: _contactController,
-                              decoration: InputDecoration(
-                                labelText: "Contact",
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
+                              decoration: _input("Contact"),
                             ),
                             const SizedBox(height: 20),
+
+                            // 🗺 Map Picker Address
                             TextField(
                               controller: _addressController,
-                              decoration: InputDecoration(
-                                labelText: "Address",
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
+                              readOnly: true,
+                              decoration: _input("Address").copyWith(
+                                suffixIcon: const Icon(Icons.map),
                               ),
+                              onTap: () async {
+                                final result = await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const MapPickerScreen(),
+                                  ),
+                                );
+
+                                if (result != null && result is Map<String, dynamic>) {
+                                  _addressController.text = result["address"];
+                                  selectedLat = result["lat"];
+                                  selectedLng = result["lng"];
+                                }
+                              },
                             ),
+
                             const SizedBox(height: 20),
                             TextField(
                               controller: _passwordController,
                               obscureText: true,
-                              decoration: InputDecoration(
-                                labelText: "New Password",
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
+                              decoration: _input("New Password"),
                             ),
                             const SizedBox(height: 20),
                             TextField(
                               controller: _confirmPasswordController,
                               obscureText: true,
-                              decoration: InputDecoration(
-                                labelText: "Confirm Password",
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
+                              decoration: _input("Confirm Password"),
                             ),
+
                             const SizedBox(height: 30),
                             SizedBox(
                               width: double.infinity,
@@ -299,9 +287,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                                 onPressed: _saveChanges,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: colorScheme.primary,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
                                 ),
                                 child: const Text(
                                   "Save Changes",
@@ -313,14 +298,22 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 30),
                           ],
                         ),
                       ),
                     ),
-                  ),
+                  )
                 ],
               ),
+      ),
+    );
+  }
+
+  InputDecoration _input(String label) {
+    return InputDecoration(
+      labelText: label,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
       ),
     );
   }

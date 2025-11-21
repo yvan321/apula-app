@@ -271,6 +271,30 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                         ),
 
                         if (!isFullscreen) const SizedBox(height: 20),
+                        if (!isFullscreen)
+  const SizedBox(height: 20),
+
+if (!isFullscreen)
+  ElevatedButton.icon(
+    style: ElevatedButton.styleFrom(
+      backgroundColor: Colors.red,
+      foregroundColor: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+    ),
+    icon: const Icon(Icons.warning_amber_rounded),
+    label: const Text(
+      "TEST FIRE ALERT",
+      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+    ),
+    onPressed: () {
+      _triggerFireAlert();
+      _sendFireAlertToFirestore();
+    },
+  ),
+
 
                         if (!isFullscreen)
                           Container(

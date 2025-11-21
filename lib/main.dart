@@ -16,6 +16,7 @@ import 'screens/app/live/live_camera_view_page.dart';
 import 'screens/app/settings/account_settings_page.dart';
 import 'screens/app/settings/about_page.dart';
 import 'screens/app/settings/notifsetting_page.dart';
+import 'screens/register/map_picker.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,10 +61,22 @@ class MyApp extends StatelessWidget {
         '/': (context) => const SplashScreen(),
         '/login': (context) => const LoginScreen(),
         '/register': (context) => const RegisterScreen(),
-        '/verification': (context) {
-          final email = ModalRoute.of(context)!.settings.arguments as String;
-          return VerificationScreen(email: email);
-        },
+'/verification': (context) {
+  final args = ModalRoute.of(context)!.settings.arguments;
+
+  String email = "";
+
+  if (args is String) {
+    email = args; // case 1: arguments passed as plain string
+  } 
+  else if (args is Map) {
+    email = args["email"] ?? "";
+  }
+
+  return VerificationScreen(email: email);
+},
+
+
         '/home': (context) => const HomePage(),
         '/add_device': (context) => const AddDeviceScreen(),
         '/devices_info': (context) => const DevicesInfoScreen(),
@@ -77,6 +90,8 @@ class MyApp extends StatelessWidget {
         '/account_settings': (context) => const AccountSettingsPage(),
         '/about': (context) => const AboutPage(),
         '/notifsettings_page': (context) => const NotifSettingsPage(),
+        '/pickLocation': (context) => const MapPickerScreen(),
+
 
 
       },
