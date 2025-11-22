@@ -90,6 +90,8 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
         'userAddress': user['address'] ?? 'N/A',
         'userContact': user['contact'] ?? 'N/A',
         'userEmail': email,
+        'userLatitude': user['latitude'],
+        'userLongitude': user['longitude'],
       });
     } catch (e) {}
   }
