@@ -6,10 +6,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
-
-import 'dart:html' as html; // Web MJPEG
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/widgets.dart';
+import 'package:apula/services/cnn_listener_service.dart';
+import 'package:apula/services/alert_service.dart';
+
+// CONDITIONAL MJPEG IMPORTS
+import 'mjpeg/mobile_mjpeg_view.dart'
+    if (dart.library.html) 'mjpeg/web_mjpeg_view.dart';
 
 class LiveCameraViewPage extends StatefulWidget {
   final String deviceName;
@@ -32,14 +35,49 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   String _selectedView = "CCTV";
   Timer? _statusTimer;
 
+  DateTime? _lastAlertTime;
+
+  bool _canSendAlert() {
+    if (_lastAlertTime == null) return true;
+    return DateTime.now().difference(_lastAlertTime!) >
+        const Duration(seconds: 10);
+  }
+
+
   @override
   void initState() {
     super.initState();
 
-    Future.delayed(const Duration(seconds: 1), () {
-      setState(() => loading = false);
+    // ⭐ START CNN LISTENER HERE
+    CnnListenerService.startListening((alert, severity) {
+      print("📡 CNN UPDATE → alert=$alert  severity=$severity");
+
+      // Cooldown inside UI (optional but recommended)
+      if (!_canSendAlert()) {
+        print("⛔ Cooldown active – skipping alert");
+        return;
+      }
+      _lastAlertTime = DateTime.now();
+
+      // 🔥 HIGH severity → dispatcher + user
+      if (alert >= 0.6 || severity >= 0.6) {
+        _sendDispatcherAlert();
+        _sendUserAlert();
+      }
+      // ⚠️ Medium severity → user only
+      else if (alert >= 0.3 || severity >= 0.3) {
+        _sendUserAlert();
+      }
     });
 
+    // Existing loading delay
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted) {
+        setState(() => loading = false);
+      }
+    });
+
+    // Existing YOLO status check
     _statusTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       _checkFireStatus();
     });
@@ -62,7 +100,7 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
           setState(() => fireDetected = false);
         }
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   Future<void> _sendFireAlertToFirestore() async {
@@ -131,6 +169,64 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
     );
   }
 
+  void _sendUserAlert() {
+    print("🔔 Sending USER alert...");
+    AlertService.sendUserAlert(deviceName: widget.deviceName);
+  }
+
+  void _sendDispatcherAlert() {
+    print("🚨 Sending DISPATCHER alert...");
+    AlertService.sendDispatcherAlert(deviceName: widget.deviceName);
+  }
+
+  void _showSeverityPopup(String message) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: Colors.white,
+        title: const Text("CNN Alert Simulation"),
+        content: Text(message),
+        actions: [
+          TextButton(
+            child: const Text("OK"),
+            onPressed: () => Navigator.pop(context),
+          )
+        ],
+      ),
+    );
+  }
+
+
+  void _simulateCnnInput(double alert, double severity) {
+    if (!_canSendAlert()) {
+      _showSeverityPopup("Cooldown active — wait a few seconds.");
+      return;
+    }
+
+    _lastAlertTime = DateTime.now();
+
+    if (alert >= 0.6 || severity >= 0.6) {
+      AlertService.sendDispatcherAlert(deviceName: widget.deviceName);
+      AlertService.sendUserAlert(deviceName: widget.deviceName);
+
+      _showSeverityPopup(
+        "🔥 HIGH severity\nDispatcher + User alerted (Firestore updated)",
+      );
+    } 
+    else if (alert >= 0.3 || severity >= 0.3) {
+      AlertService.sendUserAlert(deviceName: widget.deviceName);
+
+      _showSeverityPopup(
+        "⚠ MEDIUM severity\nUser alerted (Firestore updated)",
+      );
+    } 
+    else {
+      _showSeverityPopup(
+        "🟢 LOW severity\nNo alert dispatched.",
+      );
+    }
+  }
+
   @override
   void dispose() {
     _statusTimer?.cancel();
@@ -138,10 +234,16 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
     super.dispose();
   }
 
+  Widget _buildCameraView() {
+    final streamUrl = "$flaskBaseUrl/video_feed";
+
+    return MJpegView(url: streamUrl); // auto selects web or mobile version
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // ⭐ EVERYTHING WHITE
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: Stack(
           children: [
@@ -177,7 +279,6 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                           const SizedBox(height: 10),
                         ],
 
-                        // ⭐ CCTV / THERMAL BUTTONS
                         if (!isFullscreen)
                           ToggleButtons(
                             borderRadius: BorderRadius.circular(12),
@@ -187,19 +288,20 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                             ],
                             onPressed: (index) {
                               setState(() {
-                                _selectedView = index == 0 ? "CCTV" : "THERMAL";
+                                _selectedView =
+                                    index == 0 ? "CCTV" : "THERMAL";
                               });
                             },
                             children: const [
                               Padding(
-                                padding:
-                                    EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 20, vertical: 8),
                                 child: Text("CCTV",
                                     style: TextStyle(color: Colors.black)),
                               ),
                               Padding(
-                                padding:
-                                    EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 20, vertical: 8),
                                 child: Text("THERMAL",
                                     style: TextStyle(color: Colors.black)),
                               ),
@@ -208,11 +310,10 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
 
                         if (!isFullscreen) const SizedBox(height: 20),
 
-                        // ⭐ CAMERA VIEW AREA
                         Expanded(
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.white, // ⭐ CAMERA FRAME = WHITE
+                              color: Colors.white,
                               borderRadius: isFullscreen
                                   ? BorderRadius.zero
                                   : BorderRadius.circular(20),
@@ -221,12 +322,7 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                             child: Stack(
                               children: [
                                 _selectedView == "CCTV"
-                                    ? (kIsWeb
-                                        ? MjpegView(url: "$flaskBaseUrl/video_feed")
-                                        : Image.network(
-                                            "$flaskBaseUrl/video_feed",
-                                            fit: BoxFit.cover,
-                                          ))
+                                    ? _buildCameraView()
                                     : Image.asset(
                                         "assets/examples/thermal_example.png",
                                         fit: BoxFit.cover,
@@ -272,31 +368,56 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                           ),
                         ),
 
-                        if (!isFullscreen) const SizedBox(height: 20),
+                        const SizedBox(height: 20),
+
                         if (!isFullscreen)
-  const SizedBox(height: 20),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: const Icon(Icons.warning_amber_rounded),
+                            label: const Text(
+                              "TEST FIRE ALERT",
+                              style: TextStyle(
+                                  fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                            onPressed: () {
+                              _triggerFireAlert();
+                              _sendFireAlertToFirestore();
+                            },
+                          ),
 
-if (!isFullscreen)
-  ElevatedButton.icon(
-    style: ElevatedButton.styleFrom(
-      backgroundColor: Colors.red,
-      foregroundColor: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-    ),
-    icon: const Icon(Icons.warning_amber_rounded),
-    label: const Text(
-      "TEST FIRE ALERT",
-      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-    ),
-    onPressed: () {
-      _triggerFireAlert();
-      _sendFireAlertToFirestore();
-    },
-  ),
+                        if (!isFullscreen) ...[
+                          const SizedBox(height: 10),
 
+                          ElevatedButton(
+                            onPressed: () => _simulateCnnInput(0.1, 0.1),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                            child: const Text("TEST: Low Severity (No Alert)"),
+                          ),
+
+                          const SizedBox(height: 10),
+
+                          ElevatedButton(
+                            onPressed: () => _simulateCnnInput(0.4, 0.4),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                            child: const Text("TEST: Medium Severity (User Only)"),
+                          ),
+
+                          const SizedBox(height: 10),
+
+                          ElevatedButton(
+                            onPressed: () => _simulateCnnInput(0.8, 0.8),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                            child: const Text("TEST: HIGH Severity (Dispatcher + User)"),
+                          ),
+                        ],
 
                         if (!isFullscreen)
                           Container(
@@ -344,26 +465,6 @@ if (!isFullscreen)
           ],
         ),
       ),
-    );
-  }
-}
-
-/// ⭐ WEB MJPEG VIEWER
-class MjpegView extends StatelessWidget {
-  final String url;
-  const MjpegView({required this.url, super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return HtmlElementView.fromTagName(
-      tagName: 'img',
-      onElementCreated: (element) {
-        final img = element as html.ImageElement;
-        img.src = url;
-        img.style.width = '100%';
-        img.style.height = '100%';
-        img.style.objectFit = 'cover';
-      },
     );
   }
 }

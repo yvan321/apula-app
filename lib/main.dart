@@ -17,12 +17,20 @@ import 'screens/app/settings/account_settings_page.dart';
 import 'screens/app/settings/about_page.dart';
 import 'screens/app/settings/notifsetting_page.dart';
 import 'screens/register/map_picker.dart';
+import 'services/background_cnn_service.dart';
+import 'package:apula/services/alert_service.dart';
+import 'package:apula/services/cnn_listener_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // ⭐ Start the CNN background model
+  await BackgroundCnnService.initialize();
+
   runApp(
     ChangeNotifierProvider(
       create: (_) => ThemeProvider(),

@@ -5,10 +5,9 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class MapPickerScreen extends StatefulWidget {
-  final String? initialAddress;   // <-- FIXED
+  final String? initialAddress;
 
-  const MapPickerScreen({super.key, this.initialAddress});   // <-- FIXED
-
+  const MapPickerScreen({super.key, this.initialAddress});
 
   @override
   State<MapPickerScreen> createState() => _MapPickerScreenState();
@@ -25,16 +24,14 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   void initState() {
     super.initState();
 
-    // If user typed an address before opening map
     if (widget.initialAddress != null && widget.initialAddress!.isNotEmpty) {
       _searchController.text = widget.initialAddress!;
-      _searchAddress(); // auto search
+      _searchAddress();
     }
 
     _reverseGeocode(selected);
   }
 
-  // 📌 Convert LatLng → Readable address
   Future<void> _reverseGeocode(LatLng pos) async {
     final url = Uri.parse(
         "https://nominatim.openstreetmap.org/reverse?lat=${pos.latitude}&lon=${pos.longitude}&format=json");
@@ -52,7 +49,6 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
     }
   }
 
-  // 🔍 Search address in Bacoor/Cavite
   Future<void> _searchAddress() async {
     String query = _searchController.text.trim();
     if (query.isEmpty) return;
@@ -105,11 +101,11 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              center: selected,
-              zoom: 16,
-              onPositionChanged: (pos, gesture) {
-                if (gesture == true && pos.center != null) {
-                  selected = pos.center!;
+              initialCenter: selected,        // UPDATED
+              initialZoom: 16,                // UPDATED
+              onPositionChanged: (MapCamera camera, bool hasGesture) {
+                if (hasGesture) {
+                  selected = camera.center;
                   _reverseGeocode(selected);
                 }
               },
