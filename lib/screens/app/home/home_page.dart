@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:apula/screens/app/live/livefootage_page.dart';
-import 'package:apula/widgets/custom_bottom_nav.dart'; // ✅ Reusable nav
+import 'package:apula/widgets/custom_bottom_nav.dart'; 
+import 'package:apula/screens/demo/fire_demo_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});

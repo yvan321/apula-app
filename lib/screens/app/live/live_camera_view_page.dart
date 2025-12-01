@@ -32,7 +32,7 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  final String flaskBaseUrl = "http://10.238.220.202:5000";77777777777777777777777777777777777777777777777
+  final String flaskBaseUrl = "http://10.238.220.202:5000";
 
   String _selectedView = "CCTV";
   Timer? _statusTimer;
@@ -196,10 +196,6 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   void initState() {
     super.initState();
 
-    CnnListenerService.startListening((alert, severity) {
-      debugPrint("📡 CNN UPDATE → alert=$alert  severity=$severity");
-      _handleCnnAlert(alert, severity);
-    });
 
     Future.delayed(const Duration(seconds: 1), () {
       if (mounted) setState(() => loading = false);

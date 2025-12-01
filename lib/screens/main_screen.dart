@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'app/home/home_page.dart';
 import 'camera_page.dart';
-
+import 'package:apula/screens/demo/fire_demo_page.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -13,12 +13,22 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
-  final List<String> _titles = ["Home", "Camera"];
+  // 5 titles (matches bottom nav)
+  final List<String> _titles = [
+    "Home",
+    "Camera",
+    "Activity",
+    "Settings",
+    "CNN Test",
+  ];
 
+  // 5 pages (same order)
   final List<Widget> _pages = const [
     HomePage(),
     CameraPage(),
-    
+    Center(child: Text("Activity Page")),    // placeholder
+    Center(child: Text("Settings Page")),    // placeholder
+    FireDemoPage(),                          // CNN Test Page
   ];
 
   void _onItemTapped(int index) {
@@ -62,6 +72,7 @@ class _MainScreenState extends State<MainScreen> {
             BottomNavigationBarItem(icon: Icon(Icons.videocam), label: "Camera"),
             BottomNavigationBarItem(icon: Icon(Icons.notifications), label: "Activity"),
             BottomNavigationBarItem(icon: Icon(Icons.settings), label: "Settings"),
+            BottomNavigationBarItem(icon: Icon(Icons.science), label: "CNN Test"),
           ],
         ),
       ),

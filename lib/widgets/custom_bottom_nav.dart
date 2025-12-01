@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:apula/screens/app/live/livefootage_page.dart';
 import 'package:apula/screens/app/notification/notification_page.dart';
-import 'package:apula/screens/app/settings/settings_page.dart'; // ✅ Added import
+import 'package:apula/screens/app/settings/settings_page.dart';
+import 'package:apula/screens/demo/fire_demo_page.dart'; 
 
 class CustomBottomNavBar extends StatelessWidget {
   final int selectedIndex;
@@ -47,8 +48,16 @@ class CustomBottomNavBar extends StatelessWidget {
                   SettingsPage(availableDevices: availableDevices),
             ),
           );
+        } else if (index == 4) {
+          // 🧪 Navigate to CNN Test Page
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const FireDemoPage(),
+            ),
+          );
         } else {
-          onItemTapped(index);
+          onItemTapped(index); // 0 = Home
         }
       },
       selectedItemColor: Theme.of(context).brightness == Brightness.dark
@@ -58,11 +67,11 @@ class CustomBottomNavBar extends StatelessWidget {
       items: const [
         BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
         BottomNavigationBarItem(icon: Icon(Icons.videocam), label: "Live"),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.notifications),
-          label: "Notifications",
-        ),
+        BottomNavigationBarItem(icon: Icon(Icons.notifications), label: "Alerts"),
         BottomNavigationBarItem(icon: Icon(Icons.settings), label: "Settings"),
+
+        /// 🧪 NEW CNN BUTTON
+        BottomNavigationBarItem(icon: Icon(Icons.science), label: "CNN Test"),
       ],
     );
   }

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'firebase_options.dart'; // your app's generated options
-import 'firebase_yolo_options.dart'; // YOLO RTDB FirebaseOptions (you already have this)
+import 'package:firebase_database/firebase_database.dart';
+
+import 'firebase_options.dart';
+import 'firebase_yolo_options.dart';
 
 import 'providers/theme_provider.dart';
 import 'screens/splash_screen.dart';
@@ -19,41 +21,37 @@ import 'screens/app/settings/about_page.dart';
 import 'screens/app/settings/notifsetting_page.dart';
 import 'screens/register/map_picker.dart';
 
+import 'services/cnn_listener_service.dart';
 import 'services/background_cnn_service.dart';
-import 'services/global_alert_handler.dart'; // for manual testing if needed
+import 'services/global_alert_handler.dart';
 
-// ⭐ GLOBAL navigatorKey for showing dialogs anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
-// YOLO RTDB Firebase app handle (initialized in main)
 late FirebaseApp yoloFirebaseApp;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Main Firebase (Firestore / primary app)
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // YOLO RTDB Firebase (separate project / RTDB)
   yoloFirebaseApp = await Firebase.initializeApp(
     name: "yoloApp",
     options: FirebaseYoloOptions.options,
   );
 
-  // Start background CNN service (pass the YOLO firebase app)
+  CnnListenerService.simulationOnly = false;
   await BackgroundCnnService.initialize(yoloFirebaseApp);
 
-  // OPTIONAL: quick manual test of modal (uncomment if needed)
-  // Future.delayed(Duration(seconds: 1), () {
-  //   GlobalAlertHandler.showFireModal(
-  //     alert: 0.9,
-  //     severity: 0.9,
-  //     snapshotUrl: "",
-  //     deviceName: "CCTV1",
-  //   );
-  // });
+  // 👉 NOW listener expects 3 params: (alert, severity, snapshotUrl)
+  CnnListenerService.startListening((alert, severity, snapshotUrl) {
+    GlobalAlertHandler.showFireModal(
+      alert: alert,
+      severity: severity,
+      snapshotUrl: snapshotUrl,
+      deviceName: "CCTV1",
+    );
+  });
 
   runApp(
     ChangeNotifierProvider(
@@ -72,52 +70,45 @@ class MyApp extends StatelessWidget {
     final themeProvider = Provider.of<ThemeProvider>(context);
 
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
       navigatorKey: navigatorKey,
+      debugShowCheckedModeBanner: false,
       title: "Apula",
       themeMode: themeProvider.themeMode,
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
           seedColor: primaryRed,
-        ).copyWith(primary: primaryRed, secondary: primaryRed),
+        ),
       ),
       darkTheme: ThemeData.dark().copyWith(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: primaryRed,
-          brightness: Brightness.dark,
-        ).copyWith(primary: primaryRed, secondary: primaryRed),
       ),
-      initialRoute: '/',
+      initialRoute: "/",
       routes: {
-        '/': (context) => const SplashScreen(),
-        '/login': (context) => const LoginScreen(),
-        '/register': (context) => const RegisterScreen(),
+        '/': (_) => const SplashScreen(),
+        '/login': (_) => const LoginScreen(),
+        '/register': (_) => const RegisterScreen(),
         '/verification': (context) {
           final args = ModalRoute.of(context)!.settings.arguments;
           String email = "";
-          if (args is String) {
-            email = args;
-          } else if (args is Map) {
-            email = args["email"] ?? "";
-          }
+          if (args is String) email = args;
+          if (args is Map) email = args["email"] ?? "";
           return VerificationScreen(email: email);
         },
-        '/home': (context) => const HomePage(),
-        '/add_device': (context) => const AddDeviceScreen(),
-        '/devices_info': (context) => const DevicesInfoScreen(),
-        '/live_footage': (context) =>
+        '/home': (_) => const HomePage(),
+        '/add_device': (_) => const AddDeviceScreen(),
+        '/devices_info': (_) => const DevicesInfoScreen(),
+        '/live_footage': (_) =>
             const LiveFootagePage(devices: ["CCTV1", "CCTV2"]),
         '/live_camera_view': (context) {
           final deviceName =
               ModalRoute.of(context)!.settings.arguments as String;
           return LiveCameraViewPage(deviceName: deviceName);
         },
-        '/account_settings': (context) => const AccountSettingsPage(),
-        '/about': (context) => const AboutPage(),
-        '/notifsettings_page': (context) => const NotifSettingsPage(),
-        '/pickLocation': (context) => const MapPickerScreen(),
+        '/account_settings': (_) => const AccountSettingsPage(),
+        '/about': (_) => const AboutPage(),
+        '/notifsettings_page': (_) => const NotifSettingsPage(),
+        '/pickLocation': (_) => const MapPickerScreen(),
       },
     );
   }
