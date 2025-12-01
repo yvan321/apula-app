@@ -10,6 +10,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  fl_chart: ^0.64.0
 
   # UI
   cupertino_icons: ^1.0.8
@@ -78,3 +79,5 @@ flutter:
     - assets/examples/thermal_example.png
     - assets/models/APULA_FUSION_CNN_v2.tflite
     - assets/models/feature_scaler.json
+    - assets/ml/cnn_model_quant.tflite
+    - assets/ml/cnn_scaler.json

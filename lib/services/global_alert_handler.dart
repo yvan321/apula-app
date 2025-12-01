@@ -1,61 +1,71 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
-
-import '../main.dart'; // navigatorKey
+import '../main.dart';
 
 class GlobalAlertHandler {
   static DateTime? _lastModalTime;
   static const Duration modalCooldown = Duration(seconds: 5);
 
-  /// MAIN ENTRY → called by CnnListenerService
   static Future<void> showFireModal({
     required double alert,
     required double severity,
     required String snapshotUrl,
     String deviceName = "Unknown Camera",
   }) async {
-    print("🔥 GlobalAlertHandler.showFireModal() | sev=$severity alert=$alert");
+    print("🔥 FireModal | sev=$severity alert=$alert");
 
-    // FIXED THRESHOLDS (use OR only for MEDIUM)
-    final bool isHigh = severity >= 0.75 && alert >= 0.75;
-    final bool isMedium = severity >= 0.10 || alert >= 0.10;
+    // ---------------------------------------------------
+    // NEW PROACTIVE CNN THRESHOLDS
+    // ---------------------------------------------------
+    final bool isDangerous = severity > 0.70 && alert > 0.95;
+    final bool isIgnition  = severity > 0.50 && alert > 0.80;
+    final bool isSmoke     = severity > 0.30 && alert > 0.60;
+    final bool isPreFire   = severity > 0.20 && alert > 0.40;
 
-    if (!isMedium && !isHigh) {
+    if (!isDangerous && !isIgnition && !isSmoke && !isPreFire) {
       print("⛔ Below thresholds → ignoring");
       return;
     }
 
+    // ---------------------------------------------------
+    // DETERMINE ALERT TYPE (THIS WAS MISSING)
+    // ---------------------------------------------------
+    String alertType = "";
+    if (isDangerous)      alertType = "🔥 EXTREME FIRE RISK";
+    else if (isIgnition)  alertType = "🔥 Ignition Stage";
+    else if (isSmoke)     alertType = "⚠️ Heavy Smoke Detected";
+    else if (isPreFire)   alertType = "⚠️ Pre-Fire Indicators";
+
     final userData = await _getUserProfile();
 
-    /// Always log user alert
+    // Always store user alert
     await _createUserAlert(alert, severity, snapshotUrl, deviceName);
 
-    if (isHigh) {
+    // ---------------------------------------------------
+    // HIGH LEVEL → DISPATCH AUTOMATICALLY
+    // ---------------------------------------------------
+    if (isDangerous || isIgnition) {
       await _createDispatcherAlert(userData, snapshotUrl, deviceName);
 
       if (_shouldShowModal()) {
-        _showHighModal(snapshotUrl);
+        _showHighModal(snapshotUrl, alertType);
       }
       return;
     }
 
-    // MEDIUM CASE
-    if (isMedium) {
-      if (_shouldShowModal()) {
-        _showMediumModal(userData, snapshotUrl, deviceName);
-      } else {
-        print("⏳ Cooldown active → MEDIUM modal not shown");
-      }
+    // ---------------------------------------------------
+    // MEDIUM LEVEL → ask for confirmation
+    // ---------------------------------------------------
+    if (_shouldShowModal()) {
+      _showMediumModal(userData, snapshotUrl, deviceName, alertType);
+    } else {
+      print("⏳ Cooldown active → modal skipped");
     }
   }
 
-  // ================================
-  // Database Helpers
-  // ================================
+  // Firestore helpers ---------------------------------------------------
 
   static Future<Map<String, dynamic>?> _getUserProfile() async {
     try {
@@ -69,8 +79,7 @@ class GlobalAlertHandler {
           .get();
 
       return snap.docs.isEmpty ? null : snap.docs.first.data();
-    } catch (e) {
-      print("❌ Error fetching user: $e");
+    } catch (_) {
       return null;
     }
   }
@@ -93,7 +102,7 @@ class GlobalAlertHandler {
 
       print("📌 user_alerts created");
     } catch (e) {
-      print("❌ Failed to create user alert: $e");
+      print("❌ user alert error: $e");
     }
   }
 
@@ -109,8 +118,8 @@ class GlobalAlertHandler {
         "description": "Fire detected in $deviceName.",
         "snapshotUrl": snapshotUrl,
         "status": "Pending",
-        "read": false,
         "timestamp": FieldValue.serverTimestamp(),
+        "read": false,
 
         "userName": user?["name"] ?? "Unknown",
         "userAddress": user?["address"] ?? "N/A",
@@ -122,13 +131,12 @@ class GlobalAlertHandler {
 
       print("🚒 Dispatcher alert created");
     } catch (e) {
-      print("❌ Failed to create dispatcher alert: $e");
+      print("❌ dispatcher alert error: $e");
     }
   }
 
-  // ================================
-  // Modal Helpers
-  // ================================
+  // Modal helpers -------------------------------------------------------
+
   static bool _shouldShowModal() {
     if (_lastModalTime == null ||
         DateTime.now().difference(_lastModalTime!) > modalCooldown) {
@@ -142,79 +150,65 @@ class GlobalAlertHandler {
     if (data.startsWith("http")) {
       return Image.network(data, height: 150, fit: BoxFit.cover);
     }
-    if (data.isNotEmpty) {
-      try {
-        final bytes = base64Decode(data);
-        return Image.memory(bytes, height: 150, fit: BoxFit.cover);
-      } catch (_) {}
-    }
     return const SizedBox(height: 150, child: Center(child: Text("No snapshot")));
   }
 
-  // ---------------- HIGH MODAL ------------------
-  static void _showHighModal(String snapshotUrl) {
-    final context = navigatorKey.currentState?.overlay?.context;
-    if (context == null) {
-      print("❌ HIGH MODAL FAILED — context null");
-      return;
-    }
+  // ---------------- HIGH FIRE ----------------
+  static void _showHighModal(String snapshotUrl, String alertType) {
+    final ctx = navigatorKey.currentState?.overlay?.context;
+    if (ctx == null) return;
 
     showDialog(
-      context: context,
+      context: ctx,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text("🔥 FIRE DETECTED"),
+      builder: (c) => AlertDialog(
+        title: Text(alertType),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             _snapshotWidget(snapshotUrl),
             const SizedBox(height: 10),
-            const Text("A severe fire risk was detected.\nDispatcher notified."),
+            const Text("Dispatcher notified automatically."),
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("OK"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text("OK")),
         ],
       ),
     );
   }
 
-  // ---------------- MEDIUM MODAL ------------------
+  // --------------- MEDIUM FIRE ----------------
   static void _showMediumModal(
     Map<String, dynamic>? user,
     String snapshotUrl,
     String deviceName,
+    String alertType,
   ) {
-    final context = navigatorKey.currentState?.overlay?.context;
-    if (context == null) {
-      print("❌ MEDIUM MODAL FAILED — context null");
-      return;
-    }
+    final ctx = navigatorKey.currentState?.overlay?.context;
+    if (ctx == null) return;
 
     showDialog(
-      context: context,
+      context: ctx,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text("⚠️ POSSIBLE FIRE"),
+      builder: (c) => AlertDialog(
+        title: Text(alertType),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             _snapshotWidget(snapshotUrl),
             const SizedBox(height: 10),
-            const Text("A moderate fire risk was detected.\nConfirm if real."),
+            const Text("Confirm if this fire warning is real."),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(c),
             child: const Text("FALSE ALARM"),
           ),
           ElevatedButton(
             onPressed: () async {
-              Navigator.pop(ctx);
+              Navigator.pop(c);
               await _createDispatcherAlert(user, snapshotUrl, deviceName);
             },
             child: const Text("CONFIRM FIRE"),

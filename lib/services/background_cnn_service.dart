@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
-import 'package:flutter/foundation.dart';
 
 class BackgroundCnnService {
   static bool _running = false;
@@ -12,9 +11,9 @@ class BackgroundCnnService {
   static late DatabaseReference _sensorRef;
   static late DatabaseReference _cnnOutRef;
 
-  // ---------------------------
-  // SCALER VALUES
-  // ---------------------------
+  // -------------------------------------------------------------
+  // SCALER VALUES (from cnn_scaler.pkl)
+  // -------------------------------------------------------------
   static final List<double> _mean = [
     0.24948899260189591,
     35.69337547159195,
@@ -41,15 +40,13 @@ class BackgroundCnnService {
     0.44858458096243303,
   ];
 
-  static List<double> _scaleInput(List<double> input) {
-    return List.generate(input.length, (i) {
-      return ((input[i] - _mean[i]) / _scale[i]).toDouble();
-    });
+  static List<double> _scaleInput(List<double> x) {
+    return List.generate(x.length, (i) => ((x[i] - _mean[i]) / _scale[i]));
   }
 
-  // ---------------------------
-  // INIT
-  // ---------------------------
+  // -------------------------------------------------------------
+  // INITIALIZE
+  // -------------------------------------------------------------
   static Future<void> initialize(FirebaseApp yoloApp) async {
     if (_running) return;
     _running = true;
@@ -58,7 +55,8 @@ class BackgroundCnnService {
 
     try {
       _interpreter = await Interpreter.fromAsset(
-        "assets/models/APULA_FUSION_CNN_v2.tflite",
+        "assets/ml/cnn_model_quant.tflite",
+        options: InterpreterOptions()..threads = 4,
       );
       print("✓ CNN Model Loaded");
     } catch (e) {
@@ -67,6 +65,7 @@ class BackgroundCnnService {
     }
 
     final rtdb = FirebaseDatabase.instanceFor(app: yoloApp);
+
     _yoloRef = rtdb.ref("cam_detections/latest");
     _sensorRef = rtdb.ref("sensor_data/latest");
     _cnnOutRef = rtdb.ref("cnn_results/CCTV1");
@@ -74,9 +73,9 @@ class BackgroundCnnService {
     _startLoop();
   }
 
-  // ---------------------------
-  // LOOP
-  // ---------------------------
+  // -------------------------------------------------------------
+  // LOOP — runs every 2 seconds
+  // -------------------------------------------------------------
   static void _startLoop() {
     Timer.periodic(const Duration(seconds: 2), (timer) async {
       if (!_running || _interpreter == null) return;
@@ -91,15 +90,14 @@ class BackgroundCnnService {
         }
 
         final yolo = Map<String, dynamic>.from(yoloSnap.value as Map);
-
         final sensor = sensorSnap.exists
             ? Map<String, dynamic>.from(sensorSnap.value as Map)
             : {};
 
-        // --------------------------------
-        // RAW INPUT VECTOR (10 values)
-        // --------------------------------
-        final List<double> rawInput = [
+        // ---------------------------------------------------------
+        // RAW INPUT → 10 FEATURES
+        // ---------------------------------------------------------
+        final List<double> raw = [
           (yolo["yolo_conf"] ?? 0).toDouble(),
           (sensor["temperature"] ?? 0).toDouble(),
           (sensor["humidity"] ?? 0).toDouble(),
@@ -112,44 +110,29 @@ class BackgroundCnnService {
           (yolo["yolo_no_fire_conf"] ?? 0).toDouble(),
         ];
 
-        // --------------------------------
-        // SCALE INPUT
-        // --------------------------------
-        final scaled = _scaleInput(rawInput);
-
-        // RESHAPE to (1,10,1)
+        // ---------------------------------------------------------
+        // SCALE + RESHAPE → (1,10,1)
+        // ---------------------------------------------------------
+        final scaled = _scaleInput(raw);
         final formattedInput = [
           scaled.map((v) => [v]).toList(),
         ];
 
-        // --------------------------------
-        // OUTPUT BUFFERS (FINAL FIX)
-        // --------------------------------
-        // Output 0 → severity softmax (1,3)
-        var severityOut = List.generate(1, (_) => List.filled(3, 0.0));
+        // ---------------------------------------------------------
+        // MODEL OUTPUT: (1,2) → [severity, alert]
+        // ---------------------------------------------------------
+        var output = List.generate(1, (_) => List.filled(2, 0.0));
 
-        // Output 1 → alert sigmoid (1,1)
-        var alertOut = List.generate(1, (_) => List.filled(1, 0.0));
+        _interpreter!.run(formattedInput, output);
 
-        // --------------------------------
-        // RUN CNN
-        // --------------------------------
-        _interpreter!.runForMultipleInputs(
-          [formattedInput],
-          {
-            0: alertOut, // 3-class output
-            1: severityOut,    // 1 value
-          },
-        );
-
-        double severity = severityOut[0][2]; // FIRE probability
-        double alert = alertOut[0][0];       // alert scalar
+        final double severity = output[0][0];
+        final double alert = output[0][1];
 
         print("📤 CNN OUTPUT → severity=$severity  alert=$alert");
 
-        // --------------------------------
-        // STORE OUTPUT TO RTDB
-        // --------------------------------
+        // ---------------------------------------------------------
+        // WRITE TO REALTIME DATABASE
+        // ---------------------------------------------------------
         await _cnnOutRef.set({
           "severity": severity,
           "alert": alert,
