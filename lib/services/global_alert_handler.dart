@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -6,48 +5,115 @@ import '../main.dart';
 
 class GlobalAlertHandler {
   static DateTime? _lastModalTime;
-  static const Duration modalCooldown = Duration(seconds: 5);
+  static const Duration modalCooldown = Duration(seconds: 8);
 
+  // Stability counters
+  static int _dangerCounter = 0;
+  static int _ignitionCounter = 0;
+  static const int requiredStableCycles = 2;
+
+  // =======================================================
+  // MAIN ENTRY POINT
+  // =======================================================
   static Future<void> showFireModal({
     required double alert,
     required double severity,
     required String snapshotUrl,
     String deviceName = "Unknown Camera",
   }) async {
-    print("🔥 FireModal | sev=$severity alert=$alert");
+    print("🔥 FireModal | severity=$severity | alert=$alert");
 
-    // ---------------------------------------------------
-    // NEW PROACTIVE CNN THRESHOLDS
-    // ---------------------------------------------------
-    final bool isDangerous = severity > 0.70 && alert > 0.95;
-    final bool isIgnition  = severity > 0.50 && alert > 0.80;
-    final bool isSmoke     = severity > 0.30 && alert > 0.60;
-    final bool isPreFire   = severity > 0.20 && alert > 0.40;
+    // ===================================================
+    // CNN DECISION LOGIC
+    // ===================================================
+    final bool cautionNow =
+        severity >= 0.40 && alert >= 0.73;
 
-    if (!isDangerous && !isIgnition && !isSmoke && !isPreFire) {
-      print("⛔ Below thresholds → ignoring");
+    final bool ignitionNow =
+        severity >= 0.55 && alert >= 0.75;
+
+    final bool dangerousNow =
+        severity >= 0.70 && alert >= 0.80;
+
+    // Immediate override for very high confidence spikes
+    final bool strongSpike =
+        severity >= 0.90 && alert >= 0.90;
+
+    // ===================================================
+    // STABILITY LOGIC
+    // ===================================================
+    if (dangerousNow) {
+      _dangerCounter++;
+    } else {
+      _dangerCounter = 0;
+    }
+
+    if (ignitionNow) {
+      _ignitionCounter++;
+    } else {
+      _ignitionCounter = 0;
+    }
+
+    final bool isDangerous =
+        strongSpike || _dangerCounter >= requiredStableCycles;
+
+    final bool isIgnition =
+        _ignitionCounter >= requiredStableCycles && !isDangerous;
+
+    final bool isCaution =
+        cautionNow && !isDangerous && !isIgnition;
+
+    print(
+      "Counters → danger=$_dangerCounter ignition=$_ignitionCounter "
+      "States → danger=$isDangerous ignition=$isIgnition caution=$isCaution"
+    );
+
+    // Ignore fully normal state
+    if (!isDangerous && !isIgnition && !isCaution) {
+      print("ℹ️ NORMAL → no alert");
       return;
     }
 
-    // ---------------------------------------------------
-    // DETERMINE ALERT TYPE (THIS WAS MISSING)
-    // ---------------------------------------------------
-    String alertType = "";
-    if (isDangerous)      alertType = "🔥 EXTREME FIRE RISK";
-    else if (isIgnition)  alertType = "🔥 Ignition Stage";
-    else if (isSmoke)     alertType = "⚠️ Heavy Smoke Detected";
-    else if (isPreFire)   alertType = "⚠️ Pre-Fire Indicators";
+    // ===================================================
+    // ALERT TYPE
+    // ===================================================
+    final String alertType = isDangerous
+        ? "🔥 EXTREME FIRE DANGER"
+        : isIgnition
+            ? "🔥 IGNITION ANOMALY DETECTED"
+            : "⚠️ CAUTION: FIRE-LIKE ACTIVITY";
 
-    final userData = await _getUserProfile();
+    // ===================================================
+    // USER CONTEXT
+    // ===================================================
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final userProfile = await _getUserProfile();
 
-    // Always store user alert
-    await _createUserAlert(alert, severity, snapshotUrl, deviceName);
+    // ===================================================
+    // ALWAYS LOG USER ALERT
+    // ===================================================
+    await _createUserAlert(
+      alert,
+      severity,
+      snapshotUrl,
+      deviceName,
+      uid,
+      alertType,
+    );
 
-    // ---------------------------------------------------
-    // HIGH LEVEL → DISPATCH AUTOMATICALLY
-    // ---------------------------------------------------
+    // ===================================================
+    // DISPATCHER ALERT FOR REAL EVENTS
+    // ===================================================
     if (isDangerous || isIgnition) {
-      await _createDispatcherAlert(userData, snapshotUrl, deviceName);
+      await _createDispatcherAlert(
+        userProfile,
+        snapshotUrl,
+        deviceName,
+        alertType,
+      );
+
+      _dangerCounter = 0;
+      _ignitionCounter = 0;
 
       if (_shouldShowModal()) {
         _showHighModal(snapshotUrl, alertType);
@@ -55,33 +121,33 @@ class GlobalAlertHandler {
       return;
     }
 
-    // ---------------------------------------------------
-    // MEDIUM LEVEL → ask for confirmation
-    // ---------------------------------------------------
-    if (_shouldShowModal()) {
-      _showMediumModal(userData, snapshotUrl, deviceName, alertType);
-    } else {
-      print("⏳ Cooldown active → modal skipped");
+    // ===================================================
+    // CAUTION MODE
+    // ===================================================
+    if (isCaution && _shouldShowModal()) {
+      _showMediumModal(
+        userProfile,
+        snapshotUrl,
+        deviceName,
+        alertType,
+      );
     }
   }
 
-  // Firestore helpers ---------------------------------------------------
-
+  // =======================================================
+  // FIRESTORE HELPERS
+  // =======================================================
   static Future<Map<String, dynamic>?> _getUserProfile() async {
-    try {
-      final email = FirebaseAuth.instance.currentUser?.email;
-      if (email == null) return null;
+    final email = FirebaseAuth.instance.currentUser?.email;
+    if (email == null) return null;
 
-      final snap = await FirebaseFirestore.instance
-          .collection("users")
-          .where("email", isEqualTo: email)
-          .limit(1)
-          .get();
+    final snap = await FirebaseFirestore.instance
+        .collection("users")
+        .where("email", isEqualTo: email)
+        .limit(1)
+        .get();
 
-      return snap.docs.isEmpty ? null : snap.docs.first.data();
-    } catch (_) {
-      return null;
-    }
+    return snap.docs.isEmpty ? null : snap.docs.first.data();
   }
 
   static Future<void> _createUserAlert(
@@ -89,18 +155,23 @@ class GlobalAlertHandler {
     double severity,
     String snapshotUrl,
     String deviceName,
+    String? uid,
+    String type,
   ) async {
     try {
       await FirebaseFirestore.instance.collection("user_alerts").add({
         "alert": alert,
         "severity": severity,
+        "type": type,
         "snapshotUrl": snapshotUrl,
         "device": deviceName,
         "timestamp": FieldValue.serverTimestamp(),
         "read": false,
+        "userId": uid,
+        "userEmail": FirebaseAuth.instance.currentUser?.email,
       });
 
-      print("📌 user_alerts created");
+      print("📌 user_alerts logged → $type");
     } catch (e) {
       print("❌ user alert error: $e");
     }
@@ -110,17 +181,17 @@ class GlobalAlertHandler {
     Map<String, dynamic>? user,
     String snapshotUrl,
     String deviceName,
+    String alertType,
   ) async {
     try {
       await FirebaseFirestore.instance.collection("alerts").add({
-        "type": "🔥 Fire Detected",
+        "type": alertType,
         "location": deviceName,
-        "description": "Fire detected in $deviceName.",
+        "description": "Fire detected in $deviceName",
         "snapshotUrl": snapshotUrl,
         "status": "Pending",
         "timestamp": FieldValue.serverTimestamp(),
         "read": false,
-
         "userName": user?["name"] ?? "Unknown",
         "userAddress": user?["address"] ?? "N/A",
         "userContact": user?["contact"] ?? "N/A",
@@ -129,14 +200,15 @@ class GlobalAlertHandler {
         "userLongitude": user?["longitude"] ?? 0,
       });
 
-      print("🚒 Dispatcher alert created");
+      print("🚒 dispatcher alert created");
     } catch (e) {
       print("❌ dispatcher alert error: $e");
     }
   }
 
-  // Modal helpers -------------------------------------------------------
-
+  // =======================================================
+  // MODAL HELPERS
+  // =======================================================
   static bool _shouldShowModal() {
     if (_lastModalTime == null ||
         DateTime.now().difference(_lastModalTime!) > modalCooldown) {
@@ -146,14 +218,16 @@ class GlobalAlertHandler {
     return false;
   }
 
-  static Widget _snapshotWidget(String data) {
-    if (data.startsWith("http")) {
-      return Image.network(data, height: 150, fit: BoxFit.cover);
+  static Widget _snapshotWidget(String url) {
+    if (url.startsWith("http")) {
+      return Image.network(url, height: 160, fit: BoxFit.cover);
     }
-    return const SizedBox(height: 150, child: Center(child: Text("No snapshot")));
+    return const SizedBox(
+      height: 160,
+      child: Center(child: Text("No snapshot available")),
+    );
   }
 
-  // ---------------- HIGH FIRE ----------------
   static void _showHighModal(String snapshotUrl, String alertType) {
     final ctx = navigatorKey.currentState?.overlay?.context;
     if (ctx == null) return;
@@ -161,24 +235,28 @@ class GlobalAlertHandler {
     showDialog(
       context: ctx,
       barrierDismissible: false,
-      builder: (c) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: Text(alertType),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             _snapshotWidget(snapshotUrl),
-            const SizedBox(height: 10),
-            const Text("Dispatcher notified automatically."),
+            const SizedBox(height: 12),
+            const Text(
+              "Emergency responders have been notified automatically.",
+            ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(c), child: const Text("OK")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("OK"),
+          ),
         ],
       ),
     );
   }
 
-  // --------------- MEDIUM FIRE ----------------
   static void _showMediumModal(
     Map<String, dynamic>? user,
     String snapshotUrl,
@@ -191,25 +269,30 @@ class GlobalAlertHandler {
     showDialog(
       context: ctx,
       barrierDismissible: false,
-      builder: (c) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: Text(alertType),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             _snapshotWidget(snapshotUrl),
-            const SizedBox(height: 10),
-            const Text("Confirm if this fire warning is real."),
+            const SizedBox(height: 12),
+            const Text("Please confirm if this is a real fire."),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(c),
+            onPressed: () => Navigator.pop(ctx),
             child: const Text("FALSE ALARM"),
           ),
           ElevatedButton(
             onPressed: () async {
-              Navigator.pop(c);
-              await _createDispatcherAlert(user, snapshotUrl, deviceName);
+              Navigator.pop(ctx);
+              await _createDispatcherAlert(
+                user,
+                snapshotUrl,
+                deviceName,
+                "🔥 FIRE CONFIRMED BY USER",
+              );
             },
             child: const Text("CONFIRM FIRE"),
           ),

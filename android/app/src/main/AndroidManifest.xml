@@ -15,6 +15,7 @@
     <uses-feature android:name="android.hardware.camera.any" />
     <uses-feature android:name="android.hardware.camera.autofocus" />
 
+
     <application
         android:label="apula"
         android:name="${applicationName}"

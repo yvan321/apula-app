@@ -1,6 +1,6 @@
 // lib/services/alert_service.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class AlertService {
   static final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -16,6 +16,8 @@ class AlertService {
     required double severity,
   }) async {
     try {
+      final user = FirebaseAuth.instance.currentUser;
+
       await _db.collection(userAlertsCollection).add({
         'type': severity >= 0.6 ? 'Severe Fire Risk' : 'Possible Fire',
         'deviceName': deviceName,
@@ -24,6 +26,10 @@ class AlertService {
         'severity': severity,
         'timestamp': FieldValue.serverTimestamp(),
         'read': false,
+
+        // NEW — filter alerts per user
+        'userId': user?.uid,
+        'userEmail': user?.email,
       });
 
       print("AlertService: sendUserAlert — success");
@@ -32,7 +38,7 @@ class AlertService {
     }
   }
 
-  /// DISPATCHER ALERT (only after CONFIRM FIRE)
+  /// DISPATCHER ALERT
   static Future<void> sendDispatcherAlert({
     required String deviceName,
     required String description,

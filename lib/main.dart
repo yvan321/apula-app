@@ -40,10 +40,9 @@ void main() async {
     options: FirebaseYoloOptions.options,
   );
 
-  CnnListenerService.simulationOnly = false;
   await BackgroundCnnService.initialize(yoloFirebaseApp);
 
-  // 👉 NOW listener expects 3 params: (alert, severity, snapshotUrl)
+  // REGISTER GLOBAL FIRE MODAL LISTENER
   CnnListenerService.startListening((alert, severity, snapshotUrl) {
     GlobalAlertHandler.showFireModal(
       alert: alert,
@@ -76,13 +75,9 @@ class MyApp extends StatelessWidget {
       themeMode: themeProvider.themeMode,
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: primaryRed,
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: primaryRed),
       ),
-      darkTheme: ThemeData.dark().copyWith(
-        useMaterial3: true,
-      ),
+      darkTheme: ThemeData.dark().copyWith(useMaterial3: true),
       initialRoute: "/",
       routes: {
         '/': (_) => const SplashScreen(),
@@ -101,9 +96,13 @@ class MyApp extends StatelessWidget {
         '/live_footage': (_) =>
             const LiveFootagePage(devices: ["CCTV1", "CCTV2"]),
         '/live_camera_view': (context) {
-          final deviceName =
-              ModalRoute.of(context)!.settings.arguments as String;
-          return LiveCameraViewPage(deviceName: deviceName);
+          final args =
+              ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>;
+
+          return LiveCameraViewPage(
+            deviceName: args["deviceName"],
+            cameraId: args["cameraId"],
+          );
         },
         '/account_settings': (_) => const AccountSettingsPage(),
         '/about': (_) => const AboutPage(),

@@ -1,217 +1,122 @@
+// lib/screens/app/notification/notification_page.dart
+
 import 'package:flutter/material.dart';
-import 'package:apula/widgets/custom_bottom_nav.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class NotificationPage extends StatefulWidget {
   final List<String> availableDevices;
 
-  const NotificationPage({super.key, required this.availableDevices});
+  const NotificationPage({
+    super.key,
+    required this.availableDevices,
+  });
 
   @override
   State<NotificationPage> createState() => _NotificationPageState();
 }
 
 class _NotificationPageState extends State<NotificationPage> {
-  int _selectedIndex = 2;
   String _filter = "All";
+  static const Color red = Color(0xFFA30000);
 
-  final List<Map<String, dynamic>> _notifications = [
-    {
-      "title": "Fire detected in CCTV 1",
-      "time": "2 minutes ago",
-      "read": false,
-      "details":
-          "A possible fire was detected in CCTV 1 (Building A). Please verify immediately and ensure safety protocols are followed.",
-      "image": "assets/examples/fire_example.jpg",
-    },
-    {
-      "title": "Smoke detected in CCTV 2",
-      "time": "10 minutes ago",
-      "read": true,
-      "details":
-          "Smoke was detected near CCTV 2 (Laboratory Area). This could indicate a nearby fire or system malfunction.",
-      "image": "assets/examples/fire_example.jpg",
-    },
-    {
-      "title": "High temperature in CCTV 3",
-      "time": "30 minutes ago",
-      "read": false,
-      "details":
-          "The temperature around CCTV 3 has exceeded normal limits. This may indicate overheating or an environmental hazard.",
-      "image": "assets/examples/fire_example.jpg",
-    },
-  ];
+  // ----------------------------------------------------------------------
+  // FILTER HELPER
+  // ----------------------------------------------------------------------
+  bool _matchesFilter(Map<String, dynamic> doc) {
+    final read = doc["read"] == true;
 
-  void _onItemTapped(int index) {
-    setState(() => _selectedIndex = index);
-    switch (index) {
-      case 0:
-        Navigator.pushReplacementNamed(context, '/home');
-        break;
-      case 1:
-        Navigator.pushReplacementNamed(context, '/live');
-        break;
-      case 2:
-        break;
-      case 3:
-        Navigator.pushReplacementNamed(context, '/settings');
-        break;
-    }
+    if (_filter == "Unread") return !read;
+    if (_filter == "Read") return read;
+    return true; // All
   }
 
-  List<Map<String, dynamic>> get _filteredNotifications {
-    if (_filter == "Read") {
-      return _notifications.where((n) => n["read"] == true).toList();
-    } else if (_filter == "Unread") {
-      return _notifications.where((n) => n["read"] == false).toList();
-    }
-    return _notifications;
-  }
-
-  IconData _getNotificationIcon(String title) {
-    if (title.toLowerCase().contains("fire")) {
-      return Icons.local_fire_department_rounded;
-    } else if (title.toLowerCase().contains("smoke")) {
-      return Icons.smoking_rooms_rounded;
-    } else if (title.toLowerCase().contains("temperature")) {
-      return Icons.thermostat_rounded;
-    } else {
-      return Icons.notifications_active_rounded;
-    }
-  }
-
-  // 🔥 Details dialog with image and Take Action button
-  void _showNotificationDetails(Map<String, dynamic> notif) {
-    const Color redColor = Color(0xFFA30000);
-
-    setState(() {
-      notif["read"] = true;
-    });
-
+  // ----------------------------------------------------------------------
+  // DETAILS POPUP
+  // ----------------------------------------------------------------------
+  void _showDetails(Map<String, dynamic> data) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: Text(
+          data["device"] ?? "Fire Alert",
+          style: const TextStyle(color: red),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_getNotificationIcon(notif["title"]), color: redColor),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                notif["title"],
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, color: redColor),
+            if ((data["snapshotUrl"] ?? "").toString().isNotEmpty)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.network(
+                  data["snapshotUrl"],
+                  height: 150,
+                  fit: BoxFit.cover,
+                ),
               ),
-            ),
+            const SizedBox(height: 10),
+            Text("Severity: ${data["severity"] ?? 0}"),
+            Text("Alert Score: ${data["alert"] ?? 0}"),
+            const SizedBox(height: 10),
+            const Text("Tap CLOSE to return."),
           ],
         ),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 🖼️ Image below header
-              if (notif["image"] != null) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.asset(
-                    notif["image"],
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                const SizedBox(height: 14),
-              ],
-              // 🔍 Details text
-              Text(
-                notif["details"] ?? "No additional details available.",
-                style: const TextStyle(fontSize: 15, height: 1.4),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  const Icon(Icons.access_time, size: 18, color: Colors.grey),
-                  const SizedBox(width: 6),
-                  Text(
-                    notif["time"],
-                    style: const TextStyle(color: Colors.grey, fontSize: 14),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
         actions: [
-          // 🚨 Take Action button
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pushNamed(context, '/live');
-            },
-            child: const Text(
-              "Take Action",
-              style: TextStyle(
-                color: redColor,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text(
-              "Close",
-              style: TextStyle(color: redColor, fontWeight: FontWeight.bold),
-            ),
+            child: const Text("CLOSE", style: TextStyle(color: red)),
           ),
         ],
       ),
     );
   }
 
-  void _showOptions(Map<String, dynamic> notif) {
-    const Color redColor = Color(0xFFA30000);
-
+  // ----------------------------------------------------------------------
+  // BOTTOM OPTIONS MENU (mark read / unread / delete)
+  // ----------------------------------------------------------------------
+  void _showOptions(String docId, Map<String, dynamic> data) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (context) => SafeArea(
         child: Wrap(
           children: [
             ListTile(
               leading: Icon(
-                notif["read"]
-                    ? Icons.mark_email_unread_rounded
-                    : Icons.mark_email_read_rounded,
-                color: redColor,
+                data["read"] ? Icons.mark_email_unread : Icons.mark_email_read,
+                color: red,
               ),
               title: Text(
-                notif["read"] ? "Mark as Unread" : "Mark as Read",
-                style: const TextStyle(fontWeight: FontWeight.w600),
+                data["read"] ? "Mark as Unread" : "Mark as Read",
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              onTap: () {
-                setState(() {
-                  notif["read"] = !notif["read"];
-                });
+              onTap: () async {
+                await FirebaseFirestore.instance
+                    .collection("user_alerts")
+                    .doc(docId)
+                    .update({"read": !data["read"]});
+
                 Navigator.pop(context);
               },
             ),
             ListTile(
-              leading: const Icon(Icons.delete_outline_rounded,
-                  color: Colors.redAccent),
-              title: const Text(
-                "Delete Notification",
-                style: TextStyle(
-                    color: Colors.redAccent, fontWeight: FontWeight.w600),
-              ),
-              onTap: () {
-                setState(() {
-                  _notifications.remove(notif);
-                });
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text("Delete Notification",
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, color: Colors.red)),
+              onTap: () async {
+                await FirebaseFirestore.instance
+                    .collection("user_alerts")
+                    .doc(docId)
+                    .delete();
+
                 Navigator.pop(context);
               },
             ),
-            const Divider(),
             ListTile(
-              leading: const Icon(Icons.close_rounded),
+              leading: const Icon(Icons.close),
               title: const Text("Cancel"),
               onTap: () => Navigator.pop(context),
             ),
@@ -221,212 +126,160 @@ class _NotificationPageState extends State<NotificationPage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final bool isDark = theme.brightness == Brightness.dark;
-    const Color redColor = Color(0xFFA30000);
+  // ----------------------------------------------------------------------
+  // INDIVIDUAL TILE
+  // ----------------------------------------------------------------------
+  Widget _notifTile(String id, Map<String, dynamic> data) {
+    final bool unread = data["read"] == false;
 
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return GestureDetector(
+      onTap: () => _showDetails(data),
+      onLongPress: () => _showOptions(id, data),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: unread ? red.withOpacity(0.10) : Colors.grey.shade900,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: unread ? red : Colors.grey.shade700),
+        ),
+        child: Row(
           children: [
-            // 🔙 Back Button
-            Padding(
-              padding: const EdgeInsets.only(left: 10, top: 10),
-              child: InkWell(
-                onTap: () => Navigator.pop(context),
-                borderRadius: BorderRadius.circular(30),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: const BoxDecoration(shape: BoxShape.circle),
-                  child: Icon(
-                    Icons.chevron_left,
-                    size: 30,
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
+            // Icon
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
               ),
+              child: const Icon(Icons.notifications, color: red, size: 28),
             ),
+            const SizedBox(width: 12),
 
-            // 📋 Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              child: Text(
-                "Notifications",
-                style: TextStyle(
-                  color: theme.colorScheme.primary,
-                  fontSize: 30,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-
-            // 🧭 Filter Chips
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Wrap(
-                spacing: 8,
+            // Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildFilterChip("All"),
-                  _buildFilterChip("Unread"),
-                  _buildFilterChip("Read"),
+                  Text(
+                    data["device"] ?? "Fire Alert",
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight:
+                          unread ? FontWeight.bold : FontWeight.normal,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    (data["timestamp"] ?? "").toString(),
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
                 ],
               ),
             ),
-            const SizedBox(height: 10),
 
-            // 🔔 Notification list
-            Expanded(
-              child: _filteredNotifications.isEmpty
-                  ? _buildNoNotifications()
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      itemCount: _filteredNotifications.length,
-                      itemBuilder: (context, index) {
-                        final notif = _filteredNotifications[index];
-                        final bool isUnread = notif["read"] == false;
-
-                        final bgColor = isUnread
-                            ? redColor.withOpacity(0.1)
-                            : (isDark
-                                ? const Color(0xFF1C1C1E)
-                                : Colors.grey.shade50);
-                        final borderColor =
-                            isUnread ? redColor : Colors.grey.shade300;
-                        final titleColor = isUnread
-                            ? redColor
-                            : (isDark ? Colors.white : Colors.black87);
-                        final subtitleColor =
-                            isDark ? Colors.white60 : Colors.grey.shade700;
-
-                        return GestureDetector(
-                          onTap: () => _showNotificationDetails(notif),
-                          onLongPress: () => _showOptions(notif),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            margin: const EdgeInsets.only(bottom: 14),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 10),
-                            decoration: BoxDecoration(
-                              color: bgColor,
-                              borderRadius: BorderRadius.circular(18),
-                              border:
-                                  Border.all(color: borderColor, width: 1.4),
-                              boxShadow: [
-                                if (!isDark)
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.05),
-                                    blurRadius: 6,
-                                    offset: const Offset(0, 3),
-                                  ),
-                              ],
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Dynamic icon
-                                Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Icon(
-                                    _getNotificationIcon(notif["title"]),
-                                    color: redColor,
-                                    size: 28,
-                                  ),
-                                ),
-                                const SizedBox(width: 14),
-
-                                // Texts
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        notif["title"],
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          color: titleColor,
-                                          fontWeight: isUnread
-                                              ? FontWeight.bold
-                                              : FontWeight.w500,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        notif["time"],
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          color: subtitleColor,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-
-                                if (isUnread)
-                                  Container(
-                                    margin: const EdgeInsets.only(top: 8),
-                                    width: 10,
-                                    height: 10,
-                                    decoration: const BoxDecoration(
-                                      color: redColor,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
+            if (unread)
+              Container(
+                width: 10,
+                height: 10,
+                decoration: const BoxDecoration(
+                    color: red, shape: BoxShape.circle),
+              ),
           ],
         ),
       ),
-
-      // 🔻 Bottom Nav
-      bottomNavigationBar: CustomBottomNavBar(
-        selectedIndex: _selectedIndex,
-        onItemTapped: _onItemTapped,
-        availableDevices: widget.availableDevices,
-      ),
     );
   }
 
-  Widget _buildFilterChip(String label) {
-    return FilterChip(
-      label: Text(label),
-      selected: _filter == label,
-      onSelected: (_) => setState(() => _filter = label),
-      selectedColor: const Color(0xFFA30000),
-      checkmarkColor: Colors.white,
-      labelStyle: TextStyle(
-        color: _filter == label ? Colors.white : Colors.grey.shade800,
-        fontWeight:
-            _filter == label ? FontWeight.bold : FontWeight.normal,
+  // ----------------------------------------------------------------------
+  // UI
+  // ----------------------------------------------------------------------
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        title: const Text("Alerts"),
       ),
-      backgroundColor: Colors.grey.withOpacity(0.1),
-    );
-  }
 
-  Widget _buildNoNotifications() {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+      body: Column(
         children: [
-          Icon(Icons.notifications_off_rounded, size: 80, color: Colors.grey),
-          SizedBox(height: 12),
-          Text(
-            "No notifications found",
-            style: TextStyle(fontSize: 18, color: Colors.grey),
+          // FILTER CHIPS
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Wrap(
+              spacing: 10,
+              children: [
+                _chip("All"),
+                _chip("Unread"),
+                _chip("Read"),
+              ],
+            ),
+          ),
+
+          // LIVE FIRESTORE STREAM
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection("user_alerts")
+                  .orderBy("timestamp", descending: true)
+                  .snapshots(),
+              builder: (context, snap) {
+                if (!snap.hasData) {
+                  return const Center(
+                      child: CircularProgressIndicator(color: red));
+                }
+
+                final docs = snap.data!.docs
+                    .where((d) => _matchesFilter(
+                        Map<String, dynamic>.from(d.data() as Map)))
+                    .toList();
+
+                if (docs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      "No alerts found",
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: docs.length,
+                  itemBuilder: (context, i) {
+                    final doc = docs[i];
+                    final Map<String, dynamic> data =
+                        Map<String, dynamic>.from(doc.data() as Map);
+                    return _notifTile(doc.id, data);
+                  },
+                );
+              },
+            ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ----------------------------------------------------------------------
+  // CHIP BUILDER
+  // ----------------------------------------------------------------------
+  Widget _chip(String label) {
+    final bool selected = _filter == label;
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => setState(() => _filter = label),
+      selectedColor: red,
+      checkmarkColor: Colors.white,
+      backgroundColor: Colors.grey.shade800,
+      labelStyle: TextStyle(
+        color: selected ? Colors.white : Colors.white70,
       ),
     );
   }

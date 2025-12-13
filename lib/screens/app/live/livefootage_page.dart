@@ -72,7 +72,10 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
         Navigator.pushNamed(
           context,
           '/live_camera_view',
-          arguments: deviceName, // ✅ Pass device name
+          arguments: {
+            "deviceName": deviceName,
+            "cameraId": "cam_01", // or dynamic later
+          },
         );
       }
     });

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:apula/screens/app/live/livefootage_page.dart';
 import 'package:apula/screens/app/notification/notification_page.dart';
 import 'package:apula/screens/app/settings/settings_page.dart';
-import 'package:apula/screens/demo/fire_demo_page.dart'; 
+import 'package:apula/screens/demo/fire_demo_page.dart';
 
 class CustomBottomNavBar extends StatelessWidget {
   final int selectedIndex;
@@ -23,7 +23,7 @@ class CustomBottomNavBar extends StatelessWidget {
       currentIndex: selectedIndex,
       onTap: (index) {
         if (index == 1) {
-          // 🎥 Navigate to Live Footage
+          // 🎥 LIVE FOOTAGE
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -31,25 +31,23 @@ class CustomBottomNavBar extends StatelessWidget {
             ),
           );
         } else if (index == 2) {
-          // 🔔 Navigate to Notifications
+          // 🔔 NOTIFICATIONS → NotificationPage no longer needs devices
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) =>
-                  NotificationPage(availableDevices: availableDevices),
+              builder: (context) => NotificationPage(availableDevices: availableDevices),
             ),
           );
         } else if (index == 3) {
-          // ⚙️ Navigate to Settings
+          // ⚙ SETTINGS (only keep availableDevices if SettingsPage needs it)
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) =>
-                  SettingsPage(availableDevices: availableDevices),
+              builder: (context) => SettingsPage(availableDevices: availableDevices),
             ),
           );
         } else if (index == 4) {
-          // 🧪 Navigate to CNN Test Page
+          // 🧪 CNN TEST
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -57,7 +55,8 @@ class CustomBottomNavBar extends StatelessWidget {
             ),
           );
         } else {
-          onItemTapped(index); // 0 = Home
+          // 🏠 HOME
+          onItemTapped(index);
         }
       },
       selectedItemColor: Theme.of(context).brightness == Brightness.dark
@@ -69,8 +68,6 @@ class CustomBottomNavBar extends StatelessWidget {
         BottomNavigationBarItem(icon: Icon(Icons.videocam), label: "Live"),
         BottomNavigationBarItem(icon: Icon(Icons.notifications), label: "Alerts"),
         BottomNavigationBarItem(icon: Icon(Icons.settings), label: "Settings"),
-
-        /// 🧪 NEW CNN BUTTON
         BottomNavigationBarItem(icon: Icon(Icons.science), label: "CNN Test"),
       ],
     );

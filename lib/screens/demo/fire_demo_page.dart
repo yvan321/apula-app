@@ -23,7 +23,7 @@ class _FireDemoPageState extends State<FireDemoPage> {
   String _status = "No simulation yet.";
 
   /// 🔥 Default MJPEG stream from Python
-  final String flaskStream = "http://192.168.1.4:5000/video_feed";
+  final String flaskStream = "http://10.198.39.202:5000/video_feed";
 
   /// CNN LIVE DATA HISTORY (for graphs)
   final List<double> severityLog = [];
@@ -59,12 +59,28 @@ class _FireDemoPageState extends State<FireDemoPage> {
     return double.tryParse(v.toString()) ?? 0.0;
   }
 
+  // ===========================================================
+  // ✅ ADDED: VIDEO FEED SWITCHING (Firebase → Python listener)
+  // ===========================================================
+  Future<void> _setVideoMode(int mode) async {
+    try {
+      await _rtdb.child("yolo_demo/mode").set(mode);
+      setState(() {
+        _status = "🎥 Video source switched to mode $mode";
+      });
+    } catch (e) {
+      setState(() {
+        _status = "❌ Failed to switch video source: $e";
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Fire Demo"),
-        backgroundColor: Color(0xFFA30000),
+        backgroundColor: const Color(0xFFA30000),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -76,10 +92,41 @@ class _FireDemoPageState extends State<FireDemoPage> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: MJpegView(
-                  key: ValueKey("stream_default"),
+                  key: const ValueKey("stream_default"),
                   url: flaskStream,
                 ),
               ),
+            ),
+
+            // ===================================================
+            // ✅ ADDED: VIDEO SOURCE BUTTONS (5 FEEDS)
+            // ===================================================
+            const SizedBox(height: 16),
+            const Text(
+              "🎥 VIDEO SOURCE CONTROL",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+
+            ElevatedButton(
+              onPressed: () => _setVideoMode(0),
+              child: const Text("LIVE CCTV"),
+            ),
+            ElevatedButton(
+              onPressed: () => _setVideoMode(1),
+              child: const Text("DEMO 1 – NORMAL"),
+            ),
+            ElevatedButton(
+              onPressed: () => _setVideoMode(2),
+              child: const Text("DEMO 2 – SMOKE"),
+            ),
+            ElevatedButton(
+              onPressed: () => _setVideoMode(3),
+              child: const Text("DEMO 3 – FIRE"),
+            ),
+            ElevatedButton(
+              onPressed: () => _setVideoMode(4),
+              child: const Text("DEMO 4 – FULL SCENARIO"),
             ),
 
             const SizedBox(height: 20),
@@ -138,18 +185,14 @@ class _FireDemoPageState extends State<FireDemoPage> {
               fontWeight: FontWeight.bold,
             ),
           ),
-
           const SizedBox(height: 10),
-
           Text(
             "Severity: ${latestSeverity.toStringAsFixed(3)}\n"
             "Alert: ${latestAlert.toStringAsFixed(3)}",
             style: const TextStyle(color: Colors.white),
             textAlign: TextAlign.center,
           ),
-
           const SizedBox(height: 16),
-
           _buildMiniGraph("Severity", severityLog, Colors.orange),
           const SizedBox(height: 10),
           _buildMiniGraph("Alert", alertLog, Colors.redAccent),
@@ -158,7 +201,6 @@ class _FireDemoPageState extends State<FireDemoPage> {
     );
   }
 
-  // MINI HISTOGRAM-LIKE GRAPH (no external libs)
   Widget _buildMiniGraph(String label, List<double> values, Color color) {
     return Container(
       height: 60,
@@ -183,9 +225,6 @@ class _FireDemoPageState extends State<FireDemoPage> {
     );
   }
 
-  // ===========================================================
-  // BUTTON MAKER
-  // ===========================================================
   Widget _button(String title, Color color, String state) {
     return ElevatedButton(
       onPressed: _running ? null : () => _simulate(state),
@@ -194,9 +233,6 @@ class _FireDemoPageState extends State<FireDemoPage> {
     );
   }
 
-  // ===========================================================
-  // SENSOR SIMULATION
-  // ===========================================================
   String _now() => DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
 
   Future<void> _simulate(String level) async {
@@ -205,79 +241,56 @@ class _FireDemoPageState extends State<FireDemoPage> {
     switch (level) {
       case "normal":
         entry = {
-          "detected": "no",
-          "flame": 0,
-          "humidity": 60,
-          "smoke": 30,
-          "temperature": 30,
-          "thermal_max": 28,
-          "thermal_avg": 26,
+          "DHT_Temp": 30,
+          "DHT_Humidity": 60,
+          "MQ2_Value": 80,
+          "Flame_Det": 0,
           "timestamp": _now(),
         };
         break;
-
       case "pre_fire":
         entry = {
-          "detected": "yes",
-          "flame": 0,
-          "humidity": 45,
-          "smoke": 300,
-          "temperature": 36,
-          "thermal_max": 45,
-          "thermal_avg": 42,
+          "DHT_Temp": 35,
+          "DHT_Humidity": 50,
+          "MQ2_Value": 300,
+          "Flame_Det": 0,
           "timestamp": _now(),
         };
         break;
-
       case "smoldering":
         entry = {
-          "detected": "yes",
-          "flame": 0,
-          "humidity": 40,
-          "smoke": 900,
-          "temperature": 41,
-          "thermal_max": 58,
-          "thermal_avg": 54,
+          "DHT_Temp": 40,
+          "DHT_Humidity": 45,
+          "MQ2_Value": 900,
+          "Flame_Det": 0,
           "timestamp": _now(),
         };
         break;
-
       case "ignition":
         entry = {
-          "detected": "yes",
-          "flame": 1,
-          "humidity": 32,
-          "smoke": 1300,
-          "temperature": 48,
-          "thermal_max": 78,
-          "thermal_avg": 72,
+          "DHT_Temp": 48,
+          "DHT_Humidity": 35,
+          "MQ2_Value": 1300,
+          "Flame_Det": 1,
           "timestamp": _now(),
         };
         break;
-
       case "developing":
         entry = {
-          "detected": "yes",
-          "flame": 1,
-          "humidity": 25,
-          "smoke": 2200,
-          "temperature": 60,
-          "thermal_max": 98,
-          "thermal_avg": 92,
+          "DHT_Temp": 60,
+          "DHT_Humidity": 25,
+          "MQ2_Value": 2200,
+          "Flame_Det": 1,
           "timestamp": _now(),
         };
         break;
-
       case "dangerous":
       default:
         entry = {
-          "detected": "yes",
-          "flame": 1,
-          "humidity": 15,
-          "smoke": 3500,
-          "temperature": 75,
-          "thermal_max": 115,
-          "thermal_avg": 108,
+          "DHT_Temp": 75,
+          "DHT_Humidity": 15,
+          "MQ2_Value": 3500,
+          "Flame_Det": 1,
           "timestamp": _now(),
         };
         break;
@@ -286,9 +299,6 @@ class _FireDemoPageState extends State<FireDemoPage> {
     await _sendSensor(entry, level.toUpperCase());
   }
 
-  // ===========================================================
-  // PUSH SENSOR DATA TO FIREBASE
-  // ===========================================================
   Future<void> _sendSensor(Map<String, dynamic> entry, String label) async {
     final pretty = const JsonEncoder.withIndent("  ").convert(entry);
 
@@ -311,7 +321,6 @@ class _FireDemoPageState extends State<FireDemoPage> {
     setState(() => _running = false);
   }
 
-  // STATUS BOX
   Widget _buildStatusBox() {
     return Container(
       width: double.infinity,
