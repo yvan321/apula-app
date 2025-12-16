@@ -48,6 +48,7 @@ dependencies:
 
   #video player for demo
   video_player: ^2.8.2
+  webview_flutter: ^4.7.0
 
   # ML (compatible)
   tflite_flutter: ^0.12.1

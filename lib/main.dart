@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
+
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'firebase_options.dart';
 import 'firebase_yolo_options.dart';
@@ -30,6 +32,9 @@ late FirebaseApp yoloFirebaseApp;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 🔥 REQUIRED FOR ANDROID WEBVIEW VIDEO + HLS
+  AndroidWebViewController.enableDebugging(true);
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,

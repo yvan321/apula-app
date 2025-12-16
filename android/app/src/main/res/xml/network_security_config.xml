@@ -1,7 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+
+  <!-- Allow local and LAN -->
   <domain-config cleartextTrafficPermitted="true">
-    <domain includeSubdomains="true">192.168.1.4</domain>
     <domain includeSubdomains="true">localhost</domain>
+    <domain includeSubdomains="true">192.168.1.4</domain>
   </domain-config>
+
+  <!-- Allow Cloudflare tunnel -->
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="true">trycloudflare.com</domain>
+  </domain-config>
+
+  <!-- Allow hls.js CDN -->
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="true">cdn.jsdelivr.net</domain>
+  </domain-config>
+
 </network-security-config>

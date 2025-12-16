@@ -1,12 +1,14 @@
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
-import '../../main.dart';
 
-// MJPEG viewer
-import '../app/live/mjpeg/mobile_mjpeg_view.dart'
-    if (dart.library.html) '../app/live/mjpeg/web_mjpeg_view.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
+
+import '../../main.dart';
 
 class FireDemoPage extends StatefulWidget {
   const FireDemoPage({super.key});
@@ -19,13 +21,18 @@ class _FireDemoPageState extends State<FireDemoPage> {
   final DatabaseReference _rtdb =
       FirebaseDatabase.instanceFor(app: yoloFirebaseApp).ref();
 
+  // =========================
+  // VIDEO STATE
+  // =========================
+  late final WebViewController _webViewController;
+  bool _videoLoaded = false;
+
+  // =========================
+  // DEMO / CNN STATE
+  // =========================
   bool _running = false;
   String _status = "No simulation yet.";
 
-  /// 🔥 Default MJPEG stream from Python
-  final String flaskStream = "http://10.198.39.202:5000/video_feed";
-
-  /// CNN LIVE DATA HISTORY (for graphs)
   final List<double> severityLog = [];
   final List<double> alertLog = [];
 
@@ -33,8 +40,77 @@ class _FireDemoPageState extends State<FireDemoPage> {
   void initState() {
     super.initState();
 
-    // Listen to CNN outputs LIVE
+    // -------------------------
+    // WEBVIEW INIT (NO SPINNER LOGIC)
+    // -------------------------
+    final params = PlatformWebViewControllerCreationParams();
+
+    _webViewController = WebViewController.fromPlatformCreationParams(params)
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.black);
+
+    if (Platform.isAndroid) {
+      final androidController =
+          _webViewController.platform as AndroidWebViewController;
+
+      androidController.setMediaPlaybackRequiresUserGesture(false);
+    }
+
+    _listenToViewerUrl();
+    _listenToCnn();
+  }
+
+  // =========================
+  // 🔥 LISTEN TO VIEWER URL
+  // =========================
+  
+  void _listenToViewerUrl() {
+    final ref = _rtdb.child("cloudflare/cam_01/video_feed");
+
+    ref.onValue.listen((event) {
+      final url = event.snapshot.value as String?;
+      if (url == null || _videoLoaded) return;
+
+      _videoLoaded = true;
+
+      final html = '''
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: black;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="$url" />
+  </body>
+  </html>
+  ''';
+
+      _webViewController.loadHtmlString(html);
+      setState(() {});
+    });
+  }
+
+  // =========================
+  // 🔥 LISTEN TO CNN OUTPUTS
+  // =========================
+  void _listenToCnn() {
     final cnnRef = _rtdb.child("cnn_results/CCTV1");
+
     cnnRef.onValue.listen((event) {
       final data = event.snapshot.value as Map?;
       if (data == null) return;
@@ -59,22 +135,9 @@ class _FireDemoPageState extends State<FireDemoPage> {
     return double.tryParse(v.toString()) ?? 0.0;
   }
 
-  // ===========================================================
-  // ✅ ADDED: VIDEO FEED SWITCHING (Firebase → Python listener)
-  // ===========================================================
-  Future<void> _setVideoMode(int mode) async {
-    try {
-      await _rtdb.child("yolo_demo/mode").set(mode);
-      setState(() {
-        _status = "🎥 Video source switched to mode $mode";
-      });
-    } catch (e) {
-      setState(() {
-        _status = "❌ Failed to switch video source: $e";
-      });
-    }
-  }
-
+  // =========================
+  // UI
+  // =========================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -86,57 +149,34 @@ class _FireDemoPageState extends State<FireDemoPage> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // 🔥 VIDEO STREAM
+            // =========================
+            // 🎥 VIDEO VIEW
+            // =========================
             SizedBox(
               height: 220,
+              width: double.infinity,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: MJpegView(
-                  key: const ValueKey("stream_default"),
-                  url: flaskStream,
-                ),
+                child: _videoLoaded
+                    ? WebViewWidget(controller: _webViewController)
+                    : const Center(
+                        child: Text(
+                          "Waiting for video stream…",
+                          style: TextStyle(color: Colors.black54),
+                        ),
+                      ),
               ),
             ),
 
-            // ===================================================
-            // ✅ ADDED: VIDEO SOURCE BUTTONS (5 FEEDS)
-            // ===================================================
-            const SizedBox(height: 16),
-            const Text(
-              "🎥 VIDEO SOURCE CONTROL",
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-
-            ElevatedButton(
-              onPressed: () => _setVideoMode(0),
-              child: const Text("LIVE CCTV"),
-            ),
-            ElevatedButton(
-              onPressed: () => _setVideoMode(1),
-              child: const Text("DEMO 1 – NORMAL"),
-            ),
-            ElevatedButton(
-              onPressed: () => _setVideoMode(2),
-              child: const Text("DEMO 2 – SMOKE"),
-            ),
-            ElevatedButton(
-              onPressed: () => _setVideoMode(3),
-              child: const Text("DEMO 3 – FIRE"),
-            ),
-            ElevatedButton(
-              onPressed: () => _setVideoMode(4),
-              child: const Text("DEMO 4 – FULL SCENARIO"),
-            ),
-
             const SizedBox(height: 20),
+
             _buildLiveCnnBox(),
 
             const SizedBox(height: 20),
+
             const Text(
               "Send Simulated Sensor Readings",
               style: TextStyle(fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
             ),
 
             const SizedBox(height: 20),
@@ -161,9 +201,9 @@ class _FireDemoPageState extends State<FireDemoPage> {
     );
   }
 
-  // ===========================================================
-  // 🔥 LIVE CNN OVERLAY BOX
-  // ===========================================================
+  // =========================
+  // CNN UI
+  // =========================
   Widget _buildLiveCnnBox() {
     double latestSeverity = severityLog.isEmpty ? 0 : severityLog.last;
     double latestAlert = alertLog.isEmpty ? 0 : alertLog.last;
@@ -181,7 +221,6 @@ class _FireDemoPageState extends State<FireDemoPage> {
             "🔎 LIVE CNN OUTPUT",
             style: TextStyle(
               color: Colors.white,
-              fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -192,39 +231,14 @@ class _FireDemoPageState extends State<FireDemoPage> {
             style: const TextStyle(color: Colors.white),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 16),
-          _buildMiniGraph("Severity", severityLog, Colors.orange),
-          const SizedBox(height: 10),
-          _buildMiniGraph("Alert", alertLog, Colors.redAccent),
         ],
       ),
     );
   }
 
-  Widget _buildMiniGraph(String label, List<double> values, Color color) {
-    return Container(
-      height: 60,
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: Colors.white10,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: values.map((v) {
-          double h = (v.clamp(0, 1)) * 50;
-          return Expanded(
-            child: Container(
-              height: h,
-              margin: const EdgeInsets.symmetric(horizontal: 1),
-              color: color,
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
+  // =========================
+  // SENSOR SIM
+  // =========================
   Widget _button(String title, Color color, String state) {
     return ElevatedButton(
       onPressed: _running ? null : () => _simulate(state),
@@ -275,16 +289,6 @@ class _FireDemoPageState extends State<FireDemoPage> {
           "timestamp": _now(),
         };
         break;
-      case "developing":
-        entry = {
-          "DHT_Temp": 60,
-          "DHT_Humidity": 25,
-          "MQ2_Value": 2200,
-          "Flame_Det": 1,
-          "timestamp": _now(),
-        };
-        break;
-      case "dangerous":
       default:
         entry = {
           "DHT_Temp": 75,
@@ -293,32 +297,13 @@ class _FireDemoPageState extends State<FireDemoPage> {
           "Flame_Det": 1,
           "timestamp": _now(),
         };
-        break;
     }
 
-    await _sendSensor(entry, level.toUpperCase());
-  }
-
-  Future<void> _sendSensor(Map<String, dynamic> entry, String label) async {
-    final pretty = const JsonEncoder.withIndent("  ").convert(entry);
+    await _rtdb.child("sensor_data/latest").set(entry);
 
     setState(() {
-      _running = true;
-      _status = "Sending $label sensor data...\n$pretty";
+      _status = "SENT:\n${const JsonEncoder.withIndent("  ").convert(entry)}";
     });
-
-    try {
-      await _rtdb.child("sensor_data").push().set(entry);
-      await _rtdb.child("sensor_data/latest").set(entry);
-
-      setState(() {
-        _status = "$label SENSOR SENT:\n$pretty";
-      });
-    } catch (e) {
-      setState(() => _status = "❌ FAILED: $e");
-    }
-
-    setState(() => _running = false);
   }
 
   Widget _buildStatusBox() {
