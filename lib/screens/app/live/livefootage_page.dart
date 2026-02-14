@@ -1,6 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:apula/widgets/custom_bottom_nav.dart';
 import 'package:lottie/lottie.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
+import '../../../main.dart';
 
 class LiveFootagePage extends StatefulWidget {
   final List<String> devices;
@@ -34,7 +39,7 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
   }
 
   // 🔥 Loading dialog before opening camera view
-  void _showLoadingDialog(String deviceName) {
+  void _showLoadingDialog(String cameraId) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -51,7 +56,7 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
             const SizedBox(height: 20),
             Center(
               child: Text(
-                "Opening $deviceName...",
+                "Opening $cameraId...",
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 18,
@@ -73,8 +78,8 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
           context,
           '/live_camera_view',
           arguments: {
-            "deviceName": deviceName,
-            "cameraId": "cam_01", // or dynamic later
+            "deviceName": cameraId,
+            "cameraId": cameraId,
           },
         );
       }
@@ -181,50 +186,212 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
     return ListView.builder(
       itemCount: widget.devices.length,
       itemBuilder: (context, index) {
-        final deviceName = widget.devices[index];
-        return Card(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          elevation: 6,
-          margin: const EdgeInsets.only(bottom: 16),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: () => _showLoadingDialog(deviceName),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(16),
-                  ),
-                  child: Container(
-                    height: 180,
-                    color: Colors.black,
-                    child: const Center(
-                      child: Icon(
-                        Icons.videocam,
-                        color: Colors.white,
-                        size: 50,
-                      ),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Text(
-                    deviceName,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+        final cameraId = widget.devices[index];
+        return _CameraPreviewCard(
+          cameraId: cameraId,
+          onTap: () => _showLoadingDialog(cameraId),
         );
       },
+    );
+  }
+}
+
+// 📹 Camera Preview Card with Live Feed
+class _CameraPreviewCard extends StatefulWidget {
+  final String cameraId;
+  final VoidCallback onTap;
+
+  const _CameraPreviewCard({
+    required this.cameraId,
+    required this.onTap,
+  });
+
+  @override
+  State<_CameraPreviewCard> createState() => _CameraPreviewCardState();
+}
+
+class _CameraPreviewCardState extends State<_CameraPreviewCard> {
+  late final WebViewController _webViewController;
+  bool _videoLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initWebView();
+    _loadVideoFeed();
+  }
+
+  void _initWebView() {
+    final params = PlatformWebViewControllerCreationParams();
+    _webViewController = WebViewController.fromPlatformCreationParams(params)
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.black);
+
+    if (Platform.isAndroid) {
+      final androidController =
+          _webViewController.platform as AndroidWebViewController;
+      androidController.setMediaPlaybackRequiresUserGesture(false);
+    }
+  }
+
+  void _loadVideoFeed() {
+    final ref = FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
+        .ref("cloudflare/${widget.cameraId}/video_feed");
+
+    ref.onValue.listen((event) {
+      final url = event.snapshot.value as String?;
+      if (url != null && mounted && !_videoLoaded) {
+        _videoLoaded = true;
+        final html = '''
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+              html, body {
+                margin: 0;
+                padding: 0;
+                background: black;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+              }
+              img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+              }
+            </style>
+          </head>
+          <body>
+            <img src="$url" alt="Camera Feed" />
+          </body>
+          </html>
+        ''';
+        _webViewController.loadHtmlString(html);
+        if (mounted) setState(() {});
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      elevation: 6,
+      margin: const EdgeInsets.only(bottom: 16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: widget.onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
+              child: Container(
+                height: 180,
+                color: Colors.black,
+                child: Stack(
+                  children: [
+                    // Live video preview
+                    if (_videoLoaded)
+                      WebViewWidget(controller: _webViewController)
+                    else
+                      const Center(
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                        ),
+                      ),
+                    // LIVE badge
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFA30000),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(
+                              Icons.circle,
+                              color: Colors.white,
+                              size: 8,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'LIVE',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.cameraId,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: const [
+                            Icon(
+                              Icons.wifi,
+                              size: 14,
+                              color: Colors.green,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'Connected',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.arrow_forward_ios,
+                    size: 16,
+                    color: Colors.grey,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

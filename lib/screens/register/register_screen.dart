@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:apula/screens/register/map_picker.dart';
 import 'package:apula/screens/register/verification_screen.dart';
+import 'package:apula/utils/network_config.dart';
 
 
 class RegisterScreen extends StatefulWidget {
@@ -91,12 +92,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
       });
 
       // Send email to backend
-      final url = Uri.parse("http://localhost:3007/send-verification");
-      await http.post(
+      final baseUrl = await getBaseUrl();
+      final url = Uri.parse("$baseUrl/send-verification");
+      
+      print('📧 Sending verification email to: $email');
+      print('🔗 URL: $url');
+      
+      final response = await http.post(
         url,
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"email": email, "code": code}),
       );
+
+      print('📬 Response status: ${response.statusCode}');
+      print('📬 Response body: ${response.body}');
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to send email: ${response.body}');
+      }
 
       // Success popup → go to verification
       // Success popup → go to verification

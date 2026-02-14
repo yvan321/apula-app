@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:apula/providers/theme_provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:apula/services/auth_service.dart';
 
 class SettingsPage extends StatefulWidget {
   final List<String> availableDevices;
@@ -186,6 +187,15 @@ class _SettingsPageState extends State<SettingsPage> {
                             _buildThemeModeTile(context),
                             _buildSettingsTile(
                               isDarkMode,
+                              Icons.cloud_sync,
+                              "Background AI Services",
+                              onTap: () => Navigator.pushNamed(
+                                context,
+                                '/background_services',
+                              ),
+                            ),
+                            _buildSettingsTile(
+                              isDarkMode,
                               Icons.notifications_none_outlined,
                               "Notifications",
                               onTap: () => Navigator.pushNamed(
@@ -213,8 +223,9 @@ class _SettingsPageState extends State<SettingsPage> {
                               isDarkMode,
                               Icons.logout,
                               "Log Out",
-                              onTap: () {
-                                FirebaseAuth.instance.signOut();
+                              onTap: () async {
+                                // Clear login session and sign out
+                                await AuthService.clearLoginSession();
                                 Navigator.pushNamedAndRemoveUntil(
                                   context,
                                   '/login',

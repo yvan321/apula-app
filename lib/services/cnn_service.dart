@@ -26,7 +26,7 @@ class CnnService {
     final scaler = jsonDecode(scalerJson);
 
     _means = List<double>.from(scaler["mean"]);
-    _stds = List<double>.from(scaler["std"]);
+    _stds = List<double>.from(scaler["scale"]); // JSON has 'scale' not 'std'
 
     initialized = true;
   }

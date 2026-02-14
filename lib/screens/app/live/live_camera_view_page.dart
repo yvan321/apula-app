@@ -1,9 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_database/firebase_database.dart';
-
-// Conditional MJPEG imports
-import 'mjpeg/mobile_mjpeg_view.dart'
-    if (dart.library.html) 'mjpeg/web_mjpeg_view.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
+import '../../../main.dart';
 
 class LiveCameraViewPage extends StatefulWidget {
   final String deviceName;
@@ -25,46 +26,94 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   String selectedView = "CCTV";
 
   String? videoFeedUrl;
+  late final WebViewController _webViewController;
+  bool _videoLoaded = false;
 
   @override
   void initState() {
     super.initState();
+    _initWebView();
     _listenToCloudflare();
   }
 
+  void _initWebView() {
+    final params = PlatformWebViewControllerCreationParams();
+
+    _webViewController = WebViewController.fromPlatformCreationParams(params)
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.black);
+
+    // Enable video playback on Android
+    if (Platform.isAndroid) {
+      final androidController =
+          _webViewController.platform as AndroidWebViewController;
+      androidController.setMediaPlaybackRequiresUserGesture(false);
+    }
+  }
+
   void _listenToCloudflare() {
-    final ref = FirebaseDatabase.instance
+    final ref = FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
         .ref("cloudflare/${widget.cameraId}/video_feed");
+
+    print('🔍 Listening to: cloudflare/${widget.cameraId}/video_feed');
 
     ref.onValue.listen((event) {
       final url = event.snapshot.value as String?;
+      print('📡 Received URL: $url');
+      
       if (url != null && mounted) {
+        print('✅ Loading video in WebView');
+        _loadVideoInWebView(url);
         setState(() {
           videoFeedUrl = url;
+          _videoLoaded = true;
           loading = false;
         });
+      } else {
+        print('⚠️ No video feed URL found');
+        if (mounted) {
+          setState(() {
+            loading = false;
+          });
+        }
       }
     });
   }
 
-  Widget _buildCctvView() {
-    if (videoFeedUrl == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
+  void _loadVideoInWebView(String url) {
+    final html = '''
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+          }
+          img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+          }
+        </style>
+      </head>
+      <body>
+        <img src="$url" alt="CCTV Feed" />
+      </body>
+      </html>
+    ''';
 
-    return IgnorePointer(
-      ignoring: true,
-      child: AspectRatio(
-        aspectRatio: 16 / 9,
-        child: FittedBox(
-          fit: BoxFit.contain,
-          child: SizedBox(
-            width: 1920,
-            height: 1080,
-            child: MJpegView(url: videoFeedUrl!),
-          ),
-        ),
-      ),
+    _webViewController.loadHtmlString(html);
+  }
+
+  Widget _buildCctvView() {
+    return SizedBox.expand(
+      child: WebViewWidget(controller: _webViewController),
     );
   }
 
@@ -76,9 +125,19 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   }
 
   @override
+  void dispose() {
+    // Reset orientation when leaving page
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Colors.black,
       body: SafeArea(
         child: Column(
           children: [
@@ -173,6 +232,24 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                                 onPressed: () {
                                   setState(() {
                                     isFullscreen = !isFullscreen;
+                                    if (isFullscreen) {
+                                      // Enter fullscreen - landscape mode
+                                      SystemChrome.setEnabledSystemUIMode(
+                                        SystemUiMode.immersiveSticky,
+                                      );
+                                      SystemChrome.setPreferredOrientations([
+                                        DeviceOrientation.landscapeLeft,
+                                        DeviceOrientation.landscapeRight,
+                                      ]);
+                                    } else {
+                                      // Exit fullscreen - portrait mode
+                                      SystemChrome.setEnabledSystemUIMode(
+                                        SystemUiMode.edgeToEdge,
+                                      );
+                                      SystemChrome.setPreferredOrientations([
+                                        DeviceOrientation.portraitUp,
+                                      ]);
+                                    }
                                   });
                                 },
                               ),

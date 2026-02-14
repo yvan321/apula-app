@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../main_screen.dart';
 import '../register/add_device.dart';
 import '../app/home/home_page.dart';
+import '../../services/auth_service.dart';
 
 
 class LoginScreen extends StatefulWidget {
@@ -83,6 +84,9 @@ Future<void> _login() async {
       _showSnackBar("Please verify your account first.", Colors.red);
       return;
     }
+
+    // ✅ Save login session for persistent login
+    await AuthService.saveLoginSession(email);
 
     // ✅ Successful login
     _showSnackBar("Login successful", Colors.green);

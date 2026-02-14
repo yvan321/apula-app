@@ -12,6 +12,9 @@ class GlobalAlertHandler {
   static int _ignitionCounter = 0;
   static const int requiredStableCycles = 2;
 
+  // ✅ SINGLE DISPATCH GUARD (FIX)
+  static bool _dispatcherAlertSent = false;
+
   // =======================================================
   // MAIN ENTRY POINT
   // =======================================================
@@ -35,7 +38,6 @@ class GlobalAlertHandler {
     final bool dangerousNow =
         severity >= 0.70 && alert >= 0.80;
 
-    // Immediate override for very high confidence spikes
     final bool strongSpike =
         severity >= 0.90 && alert >= 0.90;
 
@@ -68,9 +70,14 @@ class GlobalAlertHandler {
       "States → danger=$isDangerous ignition=$isIgnition caution=$isCaution"
     );
 
-    // Ignore fully normal state
+    // ===================================================
+    // RESET INCIDENT WHEN NORMAL
+    // ===================================================
     if (!isDangerous && !isIgnition && !isCaution) {
-      print("ℹ️ NORMAL → no alert");
+      if (_dispatcherAlertSent) {
+        print("✅ Incident resolved, dispatcher lock reset");
+      }
+      _dispatcherAlertSent = false;
       return;
     }
 
@@ -102,9 +109,9 @@ class GlobalAlertHandler {
     );
 
     // ===================================================
-    // DISPATCHER ALERT FOR REAL EVENTS
+    // 🔴 AUTOMATIC DISPATCHER ALERT (DANGEROUS ONLY)
     // ===================================================
-    if (isDangerous || isIgnition) {
+    if (isDangerous && !_dispatcherAlertSent) {
       await _createDispatcherAlert(
         userProfile,
         snapshotUrl,
@@ -112,6 +119,7 @@ class GlobalAlertHandler {
         alertType,
       );
 
+      _dispatcherAlertSent = true;
       _dangerCounter = 0;
       _ignitionCounter = 0;
 
@@ -122,7 +130,7 @@ class GlobalAlertHandler {
     }
 
     // ===================================================
-    // CAUTION MODE
+    // 🟡 CAUTION MODE (USER CONFIRMATION)
     // ===================================================
     if (isCaution && _shouldShowModal()) {
       _showMediumModal(
@@ -158,23 +166,17 @@ class GlobalAlertHandler {
     String? uid,
     String type,
   ) async {
-    try {
-      await FirebaseFirestore.instance.collection("user_alerts").add({
-        "alert": alert,
-        "severity": severity,
-        "type": type,
-        "snapshotUrl": snapshotUrl,
-        "device": deviceName,
-        "timestamp": FieldValue.serverTimestamp(),
-        "read": false,
-        "userId": uid,
-        "userEmail": FirebaseAuth.instance.currentUser?.email,
-      });
-
-      print("📌 user_alerts logged → $type");
-    } catch (e) {
-      print("❌ user alert error: $e");
-    }
+    await FirebaseFirestore.instance.collection("user_alerts").add({
+      "alert": alert,
+      "severity": severity,
+      "type": type,
+      "snapshotUrl": snapshotUrl,
+      "device": deviceName,
+      "timestamp": FieldValue.serverTimestamp(),
+      "read": false,
+      "userId": uid,
+      "userEmail": FirebaseAuth.instance.currentUser?.email,
+    });
   }
 
   static Future<void> _createDispatcherAlert(
@@ -183,27 +185,21 @@ class GlobalAlertHandler {
     String deviceName,
     String alertType,
   ) async {
-    try {
-      await FirebaseFirestore.instance.collection("alerts").add({
-        "type": alertType,
-        "location": deviceName,
-        "description": "Fire detected in $deviceName",
-        "snapshotUrl": snapshotUrl,
-        "status": "Pending",
-        "timestamp": FieldValue.serverTimestamp(),
-        "read": false,
-        "userName": user?["name"] ?? "Unknown",
-        "userAddress": user?["address"] ?? "N/A",
-        "userContact": user?["contact"] ?? "N/A",
-        "userEmail": user?["email"] ?? "N/A",
-        "userLatitude": user?["latitude"] ?? 0,
-        "userLongitude": user?["longitude"] ?? 0,
-      });
-
-      print("🚒 dispatcher alert created");
-    } catch (e) {
-      print("❌ dispatcher alert error: $e");
-    }
+    await FirebaseFirestore.instance.collection("alerts").add({
+      "type": alertType,
+      "location": deviceName,
+      "description": "Fire detected in $deviceName",
+      "snapshotUrl": snapshotUrl,
+      "status": "Pending",
+      "timestamp": FieldValue.serverTimestamp(),
+      "read": false,
+      "userName": user?["name"] ?? "Unknown",
+      "userAddress": user?["address"] ?? "N/A",
+      "userContact": user?["contact"] ?? "N/A",
+      "userEmail": user?["email"] ?? "N/A",
+      "userLatitude": user?["latitude"] ?? 0,
+      "userLongitude": user?["longitude"] ?? 0,
+    });
   }
 
   // =======================================================
@@ -287,12 +283,20 @@ class GlobalAlertHandler {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(ctx);
+
+              if (_dispatcherAlertSent) {
+                print("🚫 Dispatcher already alerted, skipping duplicate");
+                return;
+              }
+
               await _createDispatcherAlert(
                 user,
                 snapshotUrl,
                 deviceName,
                 "🔥 FIRE CONFIRMED BY USER",
               );
+
+              _dispatcherAlertSent = true;
             },
             child: const Text("CONFIRM FIRE"),
           ),

@@ -1,6 +1,8 @@
 // home_page.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:fl_chart/fl_chart.dart';
 
@@ -52,8 +54,8 @@ class _HomePageState extends State<HomePage> {
   static const double THRESH_IGNITION = 0.60;
   static const double THRESH_DEVELOPING = 0.80;
 
-  // available devices (kept from your original)
-  final List<String> _availableDevices = ["CCTV1", "CCTV2"];
+  // available devices - loaded from Firestore
+  List<String> _availableDevices = [];
 
   // Titles
   final List<String> _titles = [
@@ -68,9 +70,36 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _updateTime();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
-  
+    _loadDevices();
     _startDatabaseListeners();
     _startCnnListener();
+  }
+
+  Future<void> _loadDevices() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final email = user.email;
+      final query = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
+
+      if (query.docs.isNotEmpty) {
+        final userData = query.docs.first.data();
+        final List<dynamic>? cameraIds = userData['cameraIds'];
+        
+        if (cameraIds != null && mounted) {
+          setState(() {
+            _availableDevices = List<String>.from(cameraIds);
+          });
+        }
+      }
+    } catch (e) {
+      print('Error loading devices: $e');
+    }
   }
 
   void _updateTime() {
