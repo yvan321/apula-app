@@ -76,7 +76,36 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // Create verification code
       final code = (100000 + Random().nextInt(900000)).toString();
 
-      // Save temporary user to Firestore (Auto ID)
+      print('🔢 Generated verification code: $code');
+      print('📧 Attempting to register: $email');
+
+      // Send email to backend FIRST
+      final baseUrl = await getBaseUrl();
+      final url = Uri.parse("$baseUrl/send-verification");
+      
+      print('📧 Sending verification email to: $email');
+      print('🔗 URL: $url');
+      print('📦 Payload: ${jsonEncode({"email": email, "code": code})}');
+      
+      final response = await http.post(
+        url,
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"email": email, "code": code}),
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw Exception('Connection timeout. Check if backend is running.');
+        },
+      );
+
+      print('📬 Response status: ${response.statusCode}');
+      print('📬 Response body: ${response.body}');
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to send email: ${response.body}');
+      }
+
+      // Only save to Firestore AFTER email sent successfully
       final newUser = await FirebaseFirestore.instance.collection('users').add({
         "name": name,
         "email": email,
@@ -91,27 +120,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         "createdAt": FieldValue.serverTimestamp(),
       });
 
-      // Send email to backend
-      final baseUrl = await getBaseUrl();
-      final url = Uri.parse("$baseUrl/send-verification");
-      
-      print('📧 Sending verification email to: $email');
-      print('🔗 URL: $url');
-      
-      final response = await http.post(
-        url,
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"email": email, "code": code}),
-      );
+      print('✅ User saved to Firestore with ID: ${newUser.id}');
 
-      print('📬 Response status: ${response.statusCode}');
-      print('📬 Response body: ${response.body}');
-
-      if (response.statusCode != 200) {
-        throw Exception('Failed to send email: ${response.body}');
-      }
-
-      // Success popup → go to verification
       // Success popup → go to verification
 showDialog(
   context: context,
@@ -154,6 +164,7 @@ showDialog(
 );
 
     } catch (e) {
+      print('❌ Registration error: $e');
       _showSnackBar("Error: $e", Colors.red);
     }
   }

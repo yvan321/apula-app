@@ -254,7 +254,9 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                                 final result = await Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => const MapPickerScreen(),
+                                    builder: (_) => MapPickerScreen(
+                                      initialAddress: _addressController.text,
+                                    ),
                                   ),
                                 );
 

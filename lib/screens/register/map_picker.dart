@@ -115,6 +115,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 urlTemplate:
                     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
                 subdomains: const ['a', 'b', 'c'],
+                userAgentPackageName: 'com.apula.location',
               ),
             ],
           ),
