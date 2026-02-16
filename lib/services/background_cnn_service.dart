@@ -9,7 +9,7 @@ class BackgroundCnnService {
 
   static late DatabaseReference _yoloRef;
   static late DatabaseReference _sensorRef;
-  static late DatabaseReference _cnnOutRef;
+  static late DatabaseReference _rtdb;
 
   static final List<double> _mean = [
     0.24949, 35.6933, 57.2247, 507.3727, 0.0833,
@@ -35,9 +35,9 @@ class BackgroundCnnService {
     );
 
     final rtdb = FirebaseDatabase.instanceFor(app: app);
+    _rtdb = rtdb.ref();
     _yoloRef = rtdb.ref("cam_detections/latest");
     _sensorRef = rtdb.ref("sensor_data/latest");
-    _cnnOutRef = rtdb.ref("cnn_results/CCTV1");
 
     _startLoop();
   }
@@ -51,18 +51,32 @@ class BackgroundCnnService {
       if (!yoloSnap.exists) return;
 
       final yolo = Map<String, dynamic>.from(yoloSnap.value as Map);
-      final sensor = sensorSnap.exists
+      
+      // Extract camera_id from YOLO data
+      final String cameraId = yolo["camera_id"]?.toString() ?? "cam_01";
+      
+      // Get sensor data for this camera (or shared sensor)
+      final Map<String, dynamic> sensor = sensorSnap.exists
           ? Map<String, dynamic>.from(sensorSnap.value as Map)
-          : {};
+          : <String, dynamic>{};
+      
+      // Try to get camera-specific sensor data first
+      Map<String, dynamic> cameraSensor = <String, dynamic>{};
+      if (sensor.containsKey(cameraId)) {
+        cameraSensor = Map<String, dynamic>.from(sensor[cameraId] as Map);
+      } else {
+        // Fall back to shared sensor data (no camera_id key)
+        cameraSensor = sensor;
+      }
 
       final List<double> raw = [
         (yolo["yolo_conf"] ?? 0).toDouble(),
-        (sensor["DHT_Temp"] ?? 0).toDouble(),
-        (sensor["DHT_Humidity"] ?? 0).toDouble(),
-        (sensor["MQ2_Value"] ?? 0).toDouble(),
-        (sensor["Flame_Det"] ?? 0).toDouble(),
-        (sensor["thermal_max"] ?? 0).toDouble(),
-        (sensor["thermal_avg"] ?? 0).toDouble(),
+        (cameraSensor["DHT_Temp"] ?? 0).toDouble(),
+        (cameraSensor["DHT_Humidity"] ?? 0).toDouble(),
+        (cameraSensor["MQ2_Value"] ?? 0).toDouble(),
+        (cameraSensor["Flame_Det"] ?? 0).toDouble(),
+        (cameraSensor["thermal_max"] ?? 0).toDouble(),
+        (cameraSensor["thermal_avg"] ?? 0).toDouble(),
         (yolo["yolo_fire_conf"] ?? 0).toDouble(),
         (yolo["yolo_smoke_conf"] ?? 0).toDouble(),
         (yolo["yolo_no_fire_conf"] ?? 1).toDouble(),
@@ -74,7 +88,9 @@ class BackgroundCnnService {
 
       _interpreter!.run(input, output);
 
-      await _cnnOutRef.set({
+      // Write CNN results to camera-specific path
+      final cnnOutRef = _rtdb.child("cnn_results/$cameraId");
+      await cnnOutRef.set({
         "severity": output[0][0],
         "alert": output[0][1],
         "timestamp": ServerValue.timestamp,

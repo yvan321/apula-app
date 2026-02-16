@@ -31,6 +31,7 @@ import 'services/cnn_listener_service.dart';
 import 'services/background_cnn_service.dart';
 import 'services/global_alert_handler.dart';
 import 'services/background_ai_manager.dart';
+import 'services/fcm_service.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 late FirebaseApp yoloFirebaseApp;
@@ -56,19 +57,20 @@ void main() async {
   await BackgroundAIManager.initWorkManager();
   BackgroundAIManager.initForegroundTask();
 
-  // REGISTER GLOBAL FIRE MODAL LISTENER
-  CnnListenerService.startListening((alert, severity, snapshotUrl) {
-    GlobalAlertHandler.showFireModal(
-      alert: alert,
-      severity: severity,
-      snapshotUrl: snapshotUrl,
-      deviceName: "CCTV1",
-    );
-  });
+  // Auto-start both continuous and periodic monitoring
+  await Future.delayed(const Duration(seconds: 1));
+  await BackgroundAIManager.startForegroundService();
+  await BackgroundAIManager.startPeriodicTask();
+
+  // Initialize FCM for push notifications
+  await FcmService.initialize();
+
+  // Note: Global CNN listener will be initialized per-camera in HomePage
+  // after devices are loaded from Firestore
 
   runApp(
     ChangeNotifierProvider(
-      create: (_) => ThemeProvider(),
+      create: (_) => ThemeProvider()..init(),
       child: const MyApp(),
     ),
   );
@@ -82,16 +84,61 @@ class MyApp extends StatelessWidget {
     const primaryRed = Color(0xFFA30000);
     final themeProvider = Provider.of<ThemeProvider>(context);
 
+    // Light theme
+    final lightTheme = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.light,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: primaryRed,
+        brightness: Brightness.light,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFFF5F5F5),
+        foregroundColor: Colors.black87,
+        elevation: 0,
+      ),
+      scaffoldBackgroundColor: Colors.white,
+      inputDecorationTheme: InputDecorationTheme(
+        fillColor: const Color(0xFFF0F0F0),
+        filled: true,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+
+    // Dark theme
+    final darkTheme = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: primaryRed,
+        brightness: Brightness.dark,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF1A1A1A),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      scaffoldBackgroundColor: const Color(0xFF121212),
+      inputDecorationTheme: InputDecorationTheme(
+        fillColor: const Color(0xFF2A2A2A),
+        filled: true,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+
     return MaterialApp(
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       title: "Apula",
       themeMode: themeProvider.themeMode,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: primaryRed),
-      ),
-      darkTheme: ThemeData.dark().copyWith(useMaterial3: true),
+      theme: lightTheme,
+      darkTheme: darkTheme,
       initialRoute: "/",
       routes: {
         '/': (_) => const SplashScreen(),

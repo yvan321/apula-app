@@ -13,6 +13,7 @@ import 'package:apula/screens/app/live/livefootage_page.dart';
 import 'package:apula/screens/demo/fire_demo_page.dart';
 import 'package:apula/services/cnn_listener_service.dart'; // update path if necessary
 import 'package:apula/services/global_alert_handler.dart';
+import 'package:apula/utils/sensor_pairing_helper.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -36,9 +37,14 @@ class _HomePageState extends State<HomePage> {
   int _smokeDetected = 0;
   String _lastSnapshotUrl = "";
 
-  // cnn history
-  final List<double> severityHistory = [];
-  final List<double> alertHistory = [];
+  // PER-CAMERA CNN history
+  final Map<String, List<double>> severityHistoryPerCamera = {};
+  final Map<String, List<double>> alertHistoryPerCamera = {};
+  final Map<String, String> sensorStatusPerCamera = {};
+
+  // PageView controller for swipeable charts
+  final PageController _chartPageController = PageController();
+  int _currentChartPage = 0;
 
   // activity feed
   final List<Map<String, String>> recentActivities = [];
@@ -53,6 +59,12 @@ class _HomePageState extends State<HomePage> {
   static const double THRESH_SMOLDERING = 0.40;
   static const double THRESH_IGNITION = 0.60;
   static const double THRESH_DEVELOPING = 0.80;
+
+  // history persistence (Firestore)
+  static const Duration historySampleInterval = Duration(minutes: 5);
+  static const int historyLookbackDays = 30;
+  static const int historyMaxPoints = 10000;
+  final Map<String, DateTime> _lastHistoryWritePerCamera = {};
 
   // available devices - loaded from Firestore
   List<String> _availableDevices = [];
@@ -72,7 +84,7 @@ class _HomePageState extends State<HomePage> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
     _loadDevices();
     _startDatabaseListeners();
-    _startCnnListener();
+    // CNN listener started after devices are loaded
   }
 
   Future<void> _loadDevices() async {
@@ -94,11 +106,40 @@ class _HomePageState extends State<HomePage> {
         if (cameraIds != null && mounted) {
           setState(() {
             _availableDevices = List<String>.from(cameraIds);
+            
+            // Initialize history for each camera
+            for (final cameraId in _availableDevices) {
+              severityHistoryPerCamera[cameraId] = [];
+              alertHistoryPerCamera[cameraId] = [];
+              sensorStatusPerCamera[cameraId] = 'Checking...';
+            }
           });
+          
+          // Load sensor status for each camera
+          for (final cameraId in _availableDevices) {
+            _loadSensorStatus(cameraId);
+          }
+
+          // Load long-term history for charts
+          await Future.wait(
+            _availableDevices.map(_loadHistoryForCamera),
+          );
+          
+          // Start CNN listener for all cameras
+          _startCnnListener();
         }
       }
     } catch (e) {
       print('Error loading devices: $e');
+    }
+  }
+
+  Future<void> _loadSensorStatus(String cameraId) async {
+    final status = await SensorPairingHelper.getSensorStatus(cameraId);
+    if (mounted) {
+      setState(() {
+        sensorStatusPerCamera[cameraId] = status;
+      });
     }
   }
 
@@ -166,15 +207,37 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _startCnnListener() {
-    CnnListenerService.startListening((alert, severity, snapshotUrl) {
-      setState(() {
-        // append history
-        severityHistory.add(severity);
-        alertHistory.add(alert);
-        if (severityHistory.length > 50) severityHistory.removeAt(0);
-        if (alertHistory.length > 50) alertHistory.removeAt(0);
+    if (_availableDevices.isEmpty) return;
 
-        // update last snapshot if provided
+    CnnListenerService.startListening(_availableDevices, (cameraId, alert, severity, snapshotUrl) {
+      _persistHistoryIfNeeded(cameraId, alert, severity, snapshotUrl);
+
+      // Trigger global fire modal if severity is high
+      GlobalAlertHandler.showFireModal(
+        alert: alert,
+        severity: severity,
+        snapshotUrl: snapshotUrl,
+        deviceName: cameraId,
+      );
+
+      setState(() {
+        // Initialize if needed
+        severityHistoryPerCamera.putIfAbsent(cameraId, () => []);
+        alertHistoryPerCamera.putIfAbsent(cameraId, () => []);
+
+        // Append history for this camera
+        severityHistoryPerCamera[cameraId]!.add(severity);
+        alertHistoryPerCamera[cameraId]!.add(alert);
+        
+        // Keep last N points in-memory for smooth charts
+        if (severityHistoryPerCamera[cameraId]!.length > historyMaxPoints) {
+          severityHistoryPerCamera[cameraId]!.removeAt(0);
+        }
+        if (alertHistoryPerCamera[cameraId]!.length > historyMaxPoints) {
+          alertHistoryPerCamera[cameraId]!.removeAt(0);
+        }
+
+        // Update last snapshot if provided
         if (snapshotUrl.isNotEmpty) _lastSnapshotUrl = snapshotUrl;
       });
     });
@@ -188,6 +251,75 @@ class _HomePageState extends State<HomePage> {
     return 0;
   }
 
+  double _toDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is double) return v;
+    if (v is int) return v.toDouble();
+    if (v is String) return double.tryParse(v) ?? 0.0;
+    return 0.0;
+  }
+
+  Future<void> _loadHistoryForCamera(String cameraId) async {
+    try {
+      final cutoff = DateTime.now()
+          .subtract(const Duration(days: historyLookbackDays));
+      final snap = await FirebaseFirestore.instance
+          .collection('cnn_history')
+          .doc(cameraId)
+          .collection('points')
+          .where('ts', isGreaterThanOrEqualTo: Timestamp.fromDate(cutoff))
+          .orderBy('ts')
+          .get();
+
+      final severity = <double>[];
+      final alert = <double>[];
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        severity.add(_toDouble(data['severity']));
+        alert.add(_toDouble(data['alert']));
+      }
+
+      if (mounted) {
+        setState(() {
+          severityHistoryPerCamera[cameraId] = severity;
+          alertHistoryPerCamera[cameraId] = alert;
+        });
+      }
+    } catch (e) {
+      print('Error loading history for $cameraId: $e');
+    }
+  }
+
+  Future<void> _persistHistoryIfNeeded(
+    String cameraId,
+    double alert,
+    double severity,
+    String snapshotUrl,
+  ) async {
+    final now = DateTime.now();
+    final last = _lastHistoryWritePerCamera[cameraId];
+    if (last != null && now.difference(last) < historySampleInterval) {
+      return;
+    }
+
+    _lastHistoryWritePerCamera[cameraId] = now;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('cnn_history')
+          .doc(cameraId)
+          .collection('points')
+          .add({
+        'alert': alert,
+        'severity': severity,
+        'snapshotUrl': snapshotUrl,
+        'ts': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('Error saving history for $cameraId: $e');
+    }
+  }
+
   Color severityColor(double v) {
     if (v < THRESH_PRE_FIRE) return Colors.green;
     if (v < THRESH_SMOLDERING) return Colors.yellow.shade700;
@@ -196,8 +328,10 @@ class _HomePageState extends State<HomePage> {
     return Colors.red.shade900;
   }
 
-  // ---------- FLChart: Severity ----------
-  Widget buildSeverityChart() {
+  // ---------- FLChart: Severity (per camera) ----------
+  Widget buildSeverityChart(String cameraId) {
+    final severityHistory = severityHistoryPerCamera[cameraId] ?? [];
+    
     final spots = <FlSpot>[];
     for (int i = 0; i < severityHistory.length; i++) {
       spots.add(FlSpot(i.toDouble(), severityHistory[i].clamp(0.0, 1.0)));
@@ -277,8 +411,10 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ---------- FLChart: Alert ----------
-  Widget buildAlertChart() {
+  // ---------- FLChart: Alert (per camera) ----------
+  Widget buildAlertChart(String cameraId) {
+    final alertHistory = alertHistoryPerCamera[cameraId] ?? [];
+    
     final spots = <FlSpot>[];
     for (int i = 0; i < alertHistory.length; i++) {
       spots.add(FlSpot(i.toDouble(), alertHistory[i].clamp(0.0, 1.0)));
@@ -351,6 +487,8 @@ class _HomePageState extends State<HomePage> {
     _sensorSub?.cancel();
     _camLatestSub?.cancel();
     _camChildAddedSub?.cancel();
+    _chartPageController.dispose();
+    CnnListenerService.stopAll();
     super.dispose();
   }
 
@@ -431,21 +569,63 @@ class _HomePageState extends State<HomePage> {
 
                 const SizedBox(height: 20),
 
-                // MINI CNN SUMMARY BOX (Option 1)
+                // MINI CNN SUMMARY BOX
                 _buildMiniCnnBox(),
 
                 const SizedBox(height: 16),
 
-                // Graphs (Severity, Alert)
-                const Text("Fire Prediction (Severity)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 10),
-                buildSeverityChart(),
-
-                const SizedBox(height: 24),
-
-                const Text("Alert Prediction", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 10),
-                buildAlertChart(),
+                // Swipeable Camera Charts
+                if (_availableDevices.isNotEmpty) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Camera Predictions", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      // Page indicators
+                      Row(
+                        children: List.generate(
+                          _availableDevices.length,
+                          (index) => Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _currentChartPage == index
+                                  ? const Color(0xFFA30000)
+                                  : Colors.grey,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 620, // height for both charts + spacing + camera info
+                    child: PageView.builder(
+                      controller: _chartPageController,
+                      onPageChanged: (index) {
+                        setState(() {
+                          _currentChartPage = index;
+                        });
+                      },
+                      itemCount: _availableDevices.length,
+                      itemBuilder: (context, index) {
+                        final cameraId = _availableDevices[index];
+                        return _buildCameraChartPage(cameraId);
+                      },
+                    ),
+                  ),
+                ] else
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Text(
+                        "No cameras added yet",
+                        style: TextStyle(color: Colors.white54, fontSize: 16),
+                      ),
+                    ),
+                  ),
 
                 const SizedBox(height: 24),
 
@@ -475,25 +655,182 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ---------- Mini CNN Summary Box (Option 1) ----------
+  // ---------- Camera Chart Page ----------
+  Widget _buildCameraChartPage(String cameraId) {
+    final sensorStatus = sensorStatusPerCamera[cameraId] ?? 'Checking...';
+    final latestSeverity = (severityHistoryPerCamera[cameraId] ?? []).isEmpty
+        ? 0.0
+        : severityHistoryPerCamera[cameraId]!.last;
+    final latestAlert = (alertHistoryPerCamera[cameraId] ?? []).isEmpty
+        ? 0.0
+        : alertHistoryPerCamera[cameraId]!.last;
+
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Camera Info Card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.black87,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFA30000), width: 2),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.videocam, color: Color(0xFFA30000), size: 24),
+                    const SizedBox(width: 8),
+                    Text(
+                      cameraId.toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Icon(Icons.sensors, color: Colors.white70, size: 16),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        sensorStatus,
+                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildMetricTag('Severity', latestSeverity),
+                    _buildMetricTag('Alert', latestAlert),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Severity Chart
+          const Text(
+            "Fire Prediction (Severity)",
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          buildSeverityChart(cameraId),
+
+          const SizedBox(height: 20),
+
+          // Alert Chart
+          const Text(
+            "Alert Prediction",
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          buildAlertChart(cameraId),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricTag(String label, double value) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white70, fontSize: 11),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value.toStringAsFixed(3),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------- Mini CNN Summary Box ----------
   Widget _buildMiniCnnBox() {
-    final latestSeverity = severityHistory.isEmpty ? 0.0 : severityHistory.last;
-    final latestAlert = alertHistory.isEmpty ? 0.0 : alertHistory.last;
+    if (_availableDevices.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text(
+          "No cameras available",
+          style: TextStyle(color: Colors.white70),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    // Show data for currently viewed camera
+    final currentCameraId = _availableDevices[_currentChartPage];
+    final latestSeverity = (severityHistoryPerCamera[currentCameraId] ?? []).isEmpty
+        ? 0.0
+        : severityHistoryPerCamera[currentCameraId]!.last;
+    final latestAlert = (alertHistoryPerCamera[currentCameraId] ?? []).isEmpty
+        ? 0.0
+        : alertHistoryPerCamera[currentCameraId]!.last;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Column(
         children: [
-          const Text("🔎 LIVE CNN OUTPUT", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          Text(
+            "🔎 LIVE CNN OUTPUT - ${currentCameraId.toUpperCase()}",
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 10),
-          Text("Severity: ${latestSeverity.toStringAsFixed(3)}\nAlert: ${latestAlert.toStringAsFixed(3)}", style: const TextStyle(color: Colors.white), textAlign: TextAlign.center),
+          Text(
+            "Severity: ${latestSeverity.toStringAsFixed(3)}\nAlert: ${latestAlert.toStringAsFixed(3)}",
+            style: const TextStyle(color: Colors.white),
+            textAlign: TextAlign.center,
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
-              Expanded(child: _miniBar("Severity", severityHistory, Colors.orange)),
+              Expanded(
+                child: _miniBar(
+                  "Severity",
+                  severityHistoryPerCamera[currentCameraId] ?? [],
+                  Colors.orange,
+                ),
+              ),
               const SizedBox(width: 8),
-              Expanded(child: _miniBar("Alert", alertHistory, Colors.redAccent)),
+              Expanded(
+                child: _miniBar(
+                  "Alert",
+                  alertHistoryPerCamera[currentCameraId] ?? [],
+                  Colors.redAccent,
+                ),
+              ),
             ],
           ),
         ],

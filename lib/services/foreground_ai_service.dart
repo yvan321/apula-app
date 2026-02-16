@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import '../firebase_yolo_options.dart';
 
@@ -15,8 +16,9 @@ class ForegroundAITaskHandler extends TaskHandler {
   List<double>? _stds;
   DatabaseReference? _yoloRef;
   DatabaseReference? _sensorRef;
-  DatabaseReference? _cnnOutRef;
+  DatabaseReference? _rtdb;
   Timer? _timer;
+  FlutterLocalNotificationsPlugin? _localNotifications;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -66,10 +68,19 @@ class ForegroundAITaskHandler extends TaskHandler {
 
       // Firebase refs - USE YOLO FIREBASE APP
       final rtdb = FirebaseDatabase.instanceFor(app: yoloApp);
+      _rtdb = rtdb.ref();
       _yoloRef = rtdb.ref("cam_detections/latest");
       _sensorRef = rtdb.ref("sensor_data/latest");
-      _cnnOutRef = rtdb.ref("cnn_results/foreground");
       print('✅ Firebase RTDB refs created from yoloApp');
+
+      // Initialize local notifications
+      _localNotifications = FlutterLocalNotificationsPlugin();
+      const AndroidInitializationSettings androidInit =
+          AndroidInitializationSettings('@mipmap/ic_launcher');
+      await _localNotifications!.initialize(
+        InitializationSettings(android: androidInit),
+      );
+      print('✅ Local notifications initialized');
 
       // Update notification - ready
       FlutterForegroundTask.updateService(
@@ -101,74 +112,68 @@ class ForegroundAITaskHandler extends TaskHandler {
 
   Future<void> _runInference() async {
     try {
-      if (_interpreter == null || _means == null || _stds == null) {
-        print('⚠️ Not ready for inference');
-        return;
-      }
-
-      // Get data
+      // Get camera_id from latest YOLO data
       final yoloSnap = await _yoloRef!.get();
-      final sensorSnap = await _sensorRef!.get();
-
-      if (!yoloSnap.exists || !sensorSnap.exists) {
-        print('⚠️ No sensor data available yet');
+      if (!yoloSnap.exists) {
         FlutterForegroundTask.updateService(
           notificationTitle: 'APULA AI Monitoring',
-          notificationText: 'Waiting for sensor data from cameras...',
+          notificationText: 'Waiting for camera data...',
         );
         return;
       }
 
       final yoloData = yoloSnap.value as Map;
-      final sensorData = sensorSnap.value as Map;
+      final String cameraId = yoloData["camera_id"]?.toString() ?? "cam_01";
 
-      // Build features - matching background_cnn_service.dart field names
-      List<double> features = [
-        (yoloData["yolo_conf"] ?? 0.0).toDouble(),
-        (sensorData["DHT_Temp"] ?? 0.0).toDouble(),
-        (sensorData["DHT_Humidity"] ?? 0.0).toDouble(),
-        (sensorData["MQ2_Value"] ?? 0.0).toDouble(),
-        (sensorData["Flame_Det"] ?? 0.0).toDouble(),
-        (sensorData["thermal_max"] ?? 0.0).toDouble(),
-        (sensorData["thermal_avg"] ?? 0.0).toDouble(),
-        (yoloData["yolo_fire_conf"] ?? 0.0).toDouble(),
-        (yoloData["yolo_smoke_conf"] ?? 0.0).toDouble(),
-        (yoloData["yolo_no_fire_conf"] ?? 1.0).toDouble(),
-      ];
+      // Get pre-computed CNN results instead of doing inference
+      final cnnSnap = await _rtdb!.child("cnn_results/$cameraId").get();
+      if (!cnnSnap.exists) {
+        FlutterForegroundTask.updateService(
+          notificationTitle: 'APULA AI Monitoring',
+          notificationText: 'Waiting for CNN analysis...',
+        );
+        return;
+      }
 
-      // Normalize
-      List<double> normalized = List.generate(
-        features.length,
-        (i) => (features[i] - _means![i]) / _stds![i],
-      );
+      final cnnData = cnnSnap.value as Map;
+      final double severity = (cnnData["severity"] ?? 0.0).toDouble();
+      final double alert = (cnnData["alert"] ?? 0.0).toDouble();
+      final String snapshotUrl = (cnnData["input"]?["image_url"] ?? "") as String;
 
-      // Run inference - same format as background_cnn_service
-      var input = [normalized.map((v) => [v]).toList()];
-      var output = List.generate(1, (_) => List.filled(2, 0.0));
-      
-      _interpreter!.run(input, output);
+      // Apply same thresholds as GlobalAlertHandler
+      final bool cautionNow = severity >= 0.40 && alert >= 0.73;
+      final bool ignitionNow = severity >= 0.55 && alert >= 0.75;
+      final bool dangerousNow = severity >= 0.70 && alert >= 0.80;
 
-      final fireProb = output[0][0]; // severity
-      final alertProb = output[0][1]; // alert
-      final label = fireProb > 0.5 ? "FIRE" : "NO_FIRE";
+      String label = "NO_FIRE";
+      if (dangerousNow) {
+        label = "🔴 EXTREME FIRE DANGER";
+      } else if (ignitionNow) {
+        label = "🟠 IGNITION ANOMALY";
+      } else if (cautionNow) {
+        label = "🟡 FIRE-LIKE ACTIVITY";
+      }
 
       // Update notification
+      final statusText =
+          '$label - Severity: ${(severity * 100).toStringAsFixed(1)}% | Alert: ${(alert * 100).toStringAsFixed(1)}%';
       FlutterForegroundTask.updateService(
         notificationTitle: 'APULA AI Monitoring',
-        notificationText: '$label - Severity: ${(fireProb * 100).toStringAsFixed(1)}% | Alert: ${(alertProb * 100).toStringAsFixed(1)}%',
+        notificationText: statusText,
       );
 
-      // Save to Firebase
-      await _cnnOutRef!.set({
-        "severity": fireProb,
-        "alert": alertProb,
-        "prediction": label,
-        "timestamp": DateTime.now().toIso8601String(),
-        "source": "foreground_service",
-      });
-
-      print('🔥 AI: $label (Severity: ${(fireProb * 100).toStringAsFixed(1)}%, Alert: ${(alertProb * 100).toStringAsFixed(1)}%)');
-      
+      // Send popup notification if alert detected
+      if (label != "NO_FIRE") {
+        await _showAlertNotification(
+          title: label,
+          body: 'Camera: $cameraId | Severity: ${(severity * 100).toStringAsFixed(1)}%',
+          severity: severity,
+          isExtreme: dangerousNow,
+        );
+        print('🔥 AI: $label (Camera: $cameraId | Severity: ${(severity * 100).toStringAsFixed(1)}%, Alert: ${(alert * 100).toStringAsFixed(1)}%)');
+      } else {
+        print('✅ Status: NORMAL (Camera: $cameraId)');
+      }
     } catch (e) {
       print('❌ Inference Error: $e');
       final errorMsg = e.toString();
@@ -176,6 +181,42 @@ class ForegroundAITaskHandler extends TaskHandler {
         notificationTitle: 'APULA AI Monitoring',
         notificationText: 'Error: ${errorMsg.length > 50 ? errorMsg.substring(0, 50) : errorMsg}',
       );
+    }
+  }
+
+  Future<void> _showAlertNotification({
+    required String title,
+    required String body,
+    required double severity,
+    required bool isExtreme,
+  }) async {
+    try {
+      final int notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      const AndroidNotificationDetails androidDetails =
+          AndroidNotificationDetails(
+        'apula_foreground_alerts',
+        'APULA Fire Alerts',
+        channelDescription: 'Real-time fire detection alerts',
+        importance: Importance.high,
+        priority: Priority.high,
+        showWhen: true,
+        enableVibration: true,
+        playSound: true,
+      );
+
+      const NotificationDetails notificationDetails =
+          NotificationDetails(android: androidDetails);
+
+      await _localNotifications!.show(
+        notificationId,
+        title,
+        body,
+        notificationDetails,
+      );
+
+      print('📲 Alert notification shown: $title');
+    } catch (e) {
+      print('❌ Error showing alert notification: $e');
     }
   }
 

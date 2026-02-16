@@ -37,15 +37,21 @@ void callbackDispatcher() {
       // Run AI inference
       final result = await _runBackgroundAI();
       
-      // Show result notification
+      // Show alert notification ONLY if there's fire/warning detected (not NO_FIRE)
       if (result != null) {
+        final isExtreme = result['label']?.contains('EXTREME') ?? false;
+        final importance = isExtreme ? Importance.high : Importance.defaultImportance;
+        
         await _showNotification(
           notifications,
-          '🔥 AI Detection Result',
-          '${result['label']} - Severity: ${result['fireProb']}%',
-          channelId: 'background_task',
-          importance: result['label'] == 'FIRE' ? Importance.high : Importance.defaultImportance,
+          '🚨 ${result['label']}',
+          'Camera: ${result['cameraId']} | Severity: ${result['fireProb']}%',
+          channelId: 'background_alert',
+          importance: importance,
         );
+        print('📲 Notification sent for: ${result['label']}');
+      } else {
+        print('✅ No alerts - Status normal');
       }
       
       print("✅ Background AI Task Completed");
@@ -87,6 +93,9 @@ Future<Map<String, String>?> _runBackgroundAI() async {
   final yoloData = yoloSnap.value as Map;
   final sensorData = sensorSnap.value as Map;
 
+  // Extract camera_id from YOLO data
+  final String cameraId = yoloData["camera_id"]?.toString() ?? "cam_01";
+
   // Build input features - matching background_cnn_service.dart field names
   List<double> features = [
     (yoloData["yolo_conf"] ?? 0.0).toDouble(),
@@ -116,12 +125,25 @@ Future<Map<String, String>?> _runBackgroundAI() async {
   // Parse results
   final severity = output[0][0];
   final alert = output[0][1];
-  final label = severity > 0.5 ? "FIRE" : "NO_FIRE";
+
+  // Match GlobalAlertHandler thresholds
+  final bool cautionNow = severity >= 0.40 && alert >= 0.73;
+  final bool ignitionNow = severity >= 0.55 && alert >= 0.75;
+  final bool dangerousNow = severity >= 0.70 && alert >= 0.80;
+
+  String label = "NO_FIRE";
+  if (dangerousNow) {
+    label = "EXTREME FIRE DANGER";
+  } else if (ignitionNow) {
+    label = "IGNITION ANOMALY";
+  } else if (cautionNow) {
+    label = "FIRE-LIKE ACTIVITY";
+  }
 
   print("🔥 AI Result: $label (Severity: ${(severity * 100).toStringAsFixed(1)}%, Alert: ${(alert * 100).toStringAsFixed(1)}%)");
 
-  // Save to Firebase (reuse yoloApp and rtdb from above)
-  await rtdb.ref("cnn_results/background").set({
+  // Save to Firebase - camera-specific path
+  await rtdb.ref("cnn_results/$cameraId").set({
     "severity": severity,
     "alert": alert,
     "prediction": label,
@@ -131,11 +153,16 @@ Future<Map<String, String>?> _runBackgroundAI() async {
 
   interpreter.close();
   
-  // Return result for notification
-  return {
-    'label': label,
-    'fireProb': (severity * 100).toStringAsFixed(1),
-  };
+  // Only return result if there's an actual alert (not NO_FIRE)
+  if (label != "NO_FIRE") {
+    return {
+      'label': label,
+      'fireProb': (severity * 100).toStringAsFixed(1),
+      'cameraId': cameraId,
+    };
+  }
+  
+  return null;
 }
 
 // Helper to show notifications from background task

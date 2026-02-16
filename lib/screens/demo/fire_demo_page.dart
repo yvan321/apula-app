@@ -109,7 +109,7 @@ class _FireDemoPageState extends State<FireDemoPage> {
   // 🔥 LISTEN TO CNN OUTPUTS
   // =========================
   void _listenToCnn() {
-    final cnnRef = _rtdb.child("cnn_results/CCTV1");
+    final cnnRef = _rtdb.child("cnn_results/cam_01");
 
     cnnRef.onValue.listen((event) {
       final data = event.snapshot.value as Map?;
