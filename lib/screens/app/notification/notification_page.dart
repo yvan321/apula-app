@@ -151,6 +151,26 @@ class _NotificationPageState extends State<NotificationPage> {
     return true; // All
   }
 
+  bool _isIncidentAlert(Map<String, dynamic> doc) {
+    final type = (doc["type"] ?? "").toString().toLowerCase();
+    final severity = (doc["severity"] is num)
+        ? (doc["severity"] as num).toDouble()
+        : 0.0;
+    final alert = (doc["alert"] is num)
+        ? (doc["alert"] as num).toDouble()
+        : 0.0;
+
+    if (type.contains("dispatch resolved")) {
+      return true;
+    }
+
+    if (type.contains("extreme fire danger")) {
+      return true;
+    }
+
+    return severity >= 0.70 && alert >= 0.80;
+  }
+
   // ----------------------------------------------------------------------
   // DETAILS POPUP (auto-mark as read)
   // ----------------------------------------------------------------------
@@ -465,6 +485,8 @@ class _NotificationPageState extends State<NotificationPage> {
                           final docEmail = data['userEmail'] ?? data['email'] ?? '';
                           return docEmail == userEmail;
                         })
+                        .where((d) => _isIncidentAlert(
+                            Map<String, dynamic>.from(d.data() as Map)))
                         .where((d) => _matchesFilter(
                             Map<String, dynamic>.from(d.data() as Map)))
                         .toList();

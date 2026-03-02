@@ -26,8 +26,11 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   String selectedView = "CCTV";
 
   String? videoFeedUrl;
+  String? thermalFeedUrl;
   late final WebViewController _webViewController;
+  late final WebViewController _thermalWebViewController;
   bool _videoLoaded = false;
+  bool _thermalLoaded = false;
 
   @override
   void initState() {
@@ -43,35 +46,74 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black);
 
+    _thermalWebViewController =
+        WebViewController.fromPlatformCreationParams(params)
+          ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..setBackgroundColor(Colors.black);
+
     // Enable video playback on Android
     if (Platform.isAndroid) {
       final androidController =
           _webViewController.platform as AndroidWebViewController;
       androidController.setMediaPlaybackRequiresUserGesture(false);
+
+      final thermalAndroidController =
+          _thermalWebViewController.platform as AndroidWebViewController;
+      thermalAndroidController.setMediaPlaybackRequiresUserGesture(false);
     }
   }
 
   void _listenToCloudflare() {
-    final ref = FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
+    final cctvRef = FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
         .ref("cloudflare/${widget.cameraId}/video_feed");
 
-    print('🔍 Listening to: cloudflare/${widget.cameraId}/video_feed');
+    final thermalRef = FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
+        .ref("cloudflare/${widget.cameraId}/thermalfeed");
 
-    ref.onValue.listen((event) {
+    print('🔍 Listening to: cloudflare/${widget.cameraId}/video_feed');
+    print('🔍 Listening to: cloudflare/${widget.cameraId}/thermalfeed');
+
+    cctvRef.onValue.listen((event) {
       final url = event.snapshot.value as String?;
-      print('📡 Received URL: $url');
+      print('📡 Received CCTV URL: $url');
       
       if (url != null && mounted) {
         print('✅ Loading video in WebView');
-        _loadVideoInWebView(url);
+        _loadFeedInWebView(url, _webViewController, "CCTV Feed");
         setState(() {
           videoFeedUrl = url;
           _videoLoaded = true;
-          loading = false;
+          if (selectedView == "CCTV") {
+            loading = false;
+          }
         });
       } else {
         print('⚠️ No video feed URL found');
-        if (mounted) {
+        if (mounted && selectedView == "CCTV") {
+          setState(() {
+            loading = false;
+          });
+        }
+      }
+    });
+
+    thermalRef.onValue.listen((event) {
+      final url = event.snapshot.value as String?;
+      print('📡 Received Thermal URL: $url');
+
+      if (url != null && mounted) {
+        print('✅ Loading thermal feed in WebView');
+        _loadFeedInWebView(url, _thermalWebViewController, "Thermal Feed");
+        setState(() {
+          thermalFeedUrl = url;
+          _thermalLoaded = true;
+          if (selectedView == "THERMAL") {
+            loading = false;
+          }
+        });
+      } else {
+        print('⚠️ No thermal feed URL found');
+        if (mounted && selectedView == "THERMAL") {
           setState(() {
             loading = false;
           });
@@ -80,7 +122,11 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
     });
   }
 
-  void _loadVideoInWebView(String url) {
+  void _loadFeedInWebView(
+    String url,
+    WebViewController controller,
+    String altLabel,
+  ) {
     final html = '''
       <!DOCTYPE html>
       <html>
@@ -103,12 +149,12 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
         </style>
       </head>
       <body>
-        <img src="$url" alt="CCTV Feed" />
+        <img src="$url" alt="$altLabel" />
       </body>
       </html>
     ''';
 
-    _webViewController.loadHtmlString(html);
+    controller.loadHtmlString(html);
   }
 
   Widget _buildCctvView() {
@@ -118,9 +164,28 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
   }
 
   Widget _buildThermalView() {
-    return Image.asset(
-      "assets/examples/thermal_example.png",
-      fit: BoxFit.cover,
+    if (_thermalLoaded) {
+      return SizedBox.expand(
+        child: WebViewWidget(controller: _thermalWebViewController),
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.asset(
+          "assets/examples/thermal_example.png",
+          fit: BoxFit.cover,
+        ),
+        Container(
+          color: Colors.black.withOpacity(0.45),
+          alignment: Alignment.center,
+          child: const Text(
+            "Waiting for thermalfeed URL...",
+            style: TextStyle(color: Colors.white),
+          ),
+        ),
+      ],
     );
   }
 
@@ -180,6 +245,9 @@ class _LiveCameraViewPageState extends State<LiveCameraViewPage> {
                         onPressed: (i) {
                           setState(() {
                             selectedView = i == 0 ? "CCTV" : "THERMAL";
+                            loading = selectedView == "CCTV"
+                                ? !_videoLoaded
+                                : !_thermalLoaded;
                           });
                         },
                         children: const [

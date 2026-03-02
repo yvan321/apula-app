@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:apula/widgets/custom_bottom_nav.dart';
@@ -213,12 +214,16 @@ class _CameraPreviewCard extends StatefulWidget {
 class _CameraPreviewCardState extends State<_CameraPreviewCard> {
   late final WebViewController _webViewController;
   bool _videoLoaded = false;
+  bool _thermalAvailable = false;
+  StreamSubscription<DatabaseEvent>? _videoSub;
+  StreamSubscription<DatabaseEvent>? _thermalSub;
 
   @override
   void initState() {
     super.initState();
     _initWebView();
     _loadVideoFeed();
+    _listenThermalFeed();
   }
 
   void _initWebView() {
@@ -238,7 +243,7 @@ class _CameraPreviewCardState extends State<_CameraPreviewCard> {
     final ref = FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
         .ref("cloudflare/${widget.cameraId}/video_feed");
 
-    ref.onValue.listen((event) {
+    _videoSub = ref.onValue.listen((event) {
       final url = event.snapshot.value as String?;
       if (url != null && mounted && !_videoLoaded) {
         _videoLoaded = true;
@@ -272,6 +277,29 @@ class _CameraPreviewCardState extends State<_CameraPreviewCard> {
         if (mounted) setState(() {});
       }
     });
+  }
+
+  void _listenThermalFeed() {
+    final ref = FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
+        .ref("cloudflare/${widget.cameraId}/thermalfeed");
+
+    _thermalSub = ref.onValue.listen((event) {
+      final url = (event.snapshot.value as String?)?.trim();
+      final available = url != null && url.isNotEmpty;
+
+      if (mounted && available != _thermalAvailable) {
+        setState(() {
+          _thermalAvailable = available;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _videoSub?.cancel();
+    _thermalSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -362,18 +390,37 @@ class _CameraPreviewCardState extends State<_CameraPreviewCard> {
                         ),
                         const SizedBox(height: 4),
                         Row(
-                          children: const [
-                            Icon(
+                          children: [
+                            const Icon(
                               Icons.wifi,
                               size: 14,
                               color: Colors.green,
                             ),
-                            SizedBox(width: 4),
-                            Text(
+                            const SizedBox(width: 4),
+                            const Text(
                               'Connected',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Icon(
+                              Icons.thermostat,
+                              size: 14,
+                              color: _thermalAvailable
+                                  ? Colors.deepOrange
+                                  : Colors.grey,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _thermalAvailable ? 'Thermal ON' : 'Thermal OFF',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _thermalAvailable
+                                    ? Colors.deepOrange
+                                    : Colors.grey,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],

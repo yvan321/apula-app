@@ -22,6 +22,8 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
+enum ChartRange { day, week, month, year }
+
 class _HomePageState extends State<HomePage> {
   // navigation
   int _selectedIndex = 0;
@@ -40,7 +42,10 @@ class _HomePageState extends State<HomePage> {
   // PER-CAMERA CNN history
   final Map<String, List<double>> severityHistoryPerCamera = {};
   final Map<String, List<double>> alertHistoryPerCamera = {};
+  final Map<String, List<DateTime>> historyTimestampsPerCamera = {};
   final Map<String, String> sensorStatusPerCamera = {};
+
+  ChartRange _selectedChartRange = ChartRange.day;
 
   // PageView controller for swipeable charts
   final PageController _chartPageController = PageController();
@@ -111,6 +116,7 @@ class _HomePageState extends State<HomePage> {
             for (final cameraId in _availableDevices) {
               severityHistoryPerCamera[cameraId] = [];
               alertHistoryPerCamera[cameraId] = [];
+              historyTimestampsPerCamera[cameraId] = [];
               sensorStatusPerCamera[cameraId] = 'Checking...';
             }
           });
@@ -224,10 +230,12 @@ class _HomePageState extends State<HomePage> {
         // Initialize if needed
         severityHistoryPerCamera.putIfAbsent(cameraId, () => []);
         alertHistoryPerCamera.putIfAbsent(cameraId, () => []);
+        historyTimestampsPerCamera.putIfAbsent(cameraId, () => []);
 
         // Append history for this camera
         severityHistoryPerCamera[cameraId]!.add(severity);
         alertHistoryPerCamera[cameraId]!.add(alert);
+        historyTimestampsPerCamera[cameraId]!.add(DateTime.now());
         
         // Keep last N points in-memory for smooth charts
         if (severityHistoryPerCamera[cameraId]!.length > historyMaxPoints) {
@@ -235,6 +243,9 @@ class _HomePageState extends State<HomePage> {
         }
         if (alertHistoryPerCamera[cameraId]!.length > historyMaxPoints) {
           alertHistoryPerCamera[cameraId]!.removeAt(0);
+        }
+        if (historyTimestampsPerCamera[cameraId]!.length > historyMaxPoints) {
+          historyTimestampsPerCamera[cameraId]!.removeAt(0);
         }
 
         // Update last snapshot if provided
@@ -259,6 +270,74 @@ class _HomePageState extends State<HomePage> {
     return 0.0;
   }
 
+  List<int> _filteredIndexesForRange(String cameraId, int valueLength) {
+    if (valueLength == 0) return const [];
+
+    final timestamps = historyTimestampsPerCamera[cameraId] ?? const [];
+
+    if (timestamps.length != valueLength) {
+      final fallbackWindow = switch (_selectedChartRange) {
+        ChartRange.day => 288,
+        ChartRange.week => 2016,
+        ChartRange.month => 8640,
+        ChartRange.year => historyMaxPoints,
+      };
+      final start = (valueLength - fallbackWindow).clamp(0, valueLength);
+      final indexes = List<int>.generate(valueLength - start, (i) => start + i);
+      return _downsampleIndexes(indexes, 240);
+    }
+
+    final now = DateTime.now();
+    final cutoff = switch (_selectedChartRange) {
+      ChartRange.day => now.subtract(const Duration(days: 1)),
+      ChartRange.week => now.subtract(const Duration(days: 7)),
+      ChartRange.month => now.subtract(const Duration(days: 30)),
+      ChartRange.year => now.subtract(const Duration(days: 365)),
+    };
+
+    final indexes = <int>[];
+    for (int i = 0; i < valueLength; i++) {
+      if (timestamps[i].isAfter(cutoff)) {
+        indexes.add(i);
+      }
+    }
+
+    if (indexes.isEmpty) {
+      indexes.add(valueLength - 1);
+    }
+
+    return _downsampleIndexes(indexes, 240);
+  }
+
+  List<int> _downsampleIndexes(List<int> source, int maxPoints) {
+    if (source.length <= maxPoints) return source;
+
+    final sampled = <int>[];
+    final step = (source.length - 1) / (maxPoints - 1);
+
+    for (int i = 0; i < maxPoints; i++) {
+      final idx = source[(i * step).round().clamp(0, source.length - 1)];
+      if (sampled.isEmpty || sampled.last != idx) {
+        sampled.add(idx);
+      }
+    }
+
+    return sampled;
+  }
+
+  String _chartRangeLabel(ChartRange range) {
+    switch (range) {
+      case ChartRange.day:
+        return 'Day';
+      case ChartRange.week:
+        return 'Week';
+      case ChartRange.month:
+        return 'Month';
+      case ChartRange.year:
+        return 'Year';
+    }
+  }
+
   Future<void> _loadHistoryForCamera(String cameraId) async {
     try {
       final cutoff = DateTime.now()
@@ -273,16 +352,26 @@ class _HomePageState extends State<HomePage> {
 
       final severity = <double>[];
       final alert = <double>[];
+      final timestamps = <DateTime>[];
       for (final doc in snap.docs) {
         final data = doc.data();
         severity.add(_toDouble(data['severity']));
         alert.add(_toDouble(data['alert']));
+        final ts = data['ts'];
+        if (ts is Timestamp) {
+          timestamps.add(ts.toDate());
+        } else if (ts is DateTime) {
+          timestamps.add(ts);
+        } else {
+          timestamps.add(DateTime.now());
+        }
       }
 
       if (mounted) {
         setState(() {
           severityHistoryPerCamera[cameraId] = severity;
           alertHistoryPerCamera[cameraId] = alert;
+          historyTimestampsPerCamera[cameraId] = timestamps;
         });
       }
     } catch (e) {
@@ -331,13 +420,15 @@ class _HomePageState extends State<HomePage> {
   // ---------- FLChart: Severity (per camera) ----------
   Widget buildSeverityChart(String cameraId) {
     final severityHistory = severityHistoryPerCamera[cameraId] ?? [];
+    final filteredIndexes = _filteredIndexesForRange(cameraId, severityHistory.length);
     
     final spots = <FlSpot>[];
-    for (int i = 0; i < severityHistory.length; i++) {
-      spots.add(FlSpot(i.toDouble(), severityHistory[i].clamp(0.0, 1.0)));
+    for (int i = 0; i < filteredIndexes.length; i++) {
+      final value = severityHistory[filteredIndexes[i]].clamp(0.0, 1.0);
+      spots.add(FlSpot(i.toDouble(), value));
     }
 
-    final latest = severityHistory.isEmpty ? 0.0 : severityHistory.last;
+    final latest = spots.isEmpty ? 0.0 : spots.last.y;
     final lineColor = severityColor(latest);
 
     return Container(
@@ -351,7 +442,7 @@ class _HomePageState extends State<HomePage> {
         LineChartData(
           // x range
           minX: 0,
-          maxX: (severityHistory.length <= 1) ? 5 : severityHistory.length.toDouble() - 1,
+          maxX: (spots.length <= 1) ? 5 : spots.length.toDouble() - 1,
           minY: 0,
           maxY: 1,
           gridData: FlGridData(
@@ -414,10 +505,12 @@ class _HomePageState extends State<HomePage> {
   // ---------- FLChart: Alert (per camera) ----------
   Widget buildAlertChart(String cameraId) {
     final alertHistory = alertHistoryPerCamera[cameraId] ?? [];
+    final filteredIndexes = _filteredIndexesForRange(cameraId, alertHistory.length);
     
     final spots = <FlSpot>[];
-    for (int i = 0; i < alertHistory.length; i++) {
-      spots.add(FlSpot(i.toDouble(), alertHistory[i].clamp(0.0, 1.0)));
+    for (int i = 0; i < filteredIndexes.length; i++) {
+      final value = alertHistory[filteredIndexes[i]].clamp(0.0, 1.0);
+      spots.add(FlSpot(i.toDouble(), value));
     }
 
     return Container(
@@ -430,7 +523,7 @@ class _HomePageState extends State<HomePage> {
       child: LineChart(
         LineChartData(
           minX: 0,
-          maxX: (alertHistory.length <= 1) ? 5 : alertHistory.length.toDouble() - 1,
+          maxX: (spots.length <= 1) ? 5 : spots.length.toDouble() - 1,
           minY: 0,
           maxY: 1,
           gridData: FlGridData(
@@ -721,6 +814,25 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 16),
 
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: ChartRange.values.map((range) {
+              final selected = _selectedChartRange == range;
+              return ChoiceChip(
+                label: Text(_chartRangeLabel(range)),
+                selected: selected,
+                onSelected: (_) {
+                  setState(() {
+                    _selectedChartRange = range;
+                  });
+                },
+              );
+            }).toList(),
+          ),
+
+          const SizedBox(height: 12),
+
           // Severity Chart
           const Text(
             "Fire Prediction (Severity)",
@@ -813,44 +925,8 @@ class _HomePageState extends State<HomePage> {
             style: const TextStyle(color: Colors.white),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _miniBar(
-                  "Severity",
-                  severityHistoryPerCamera[currentCameraId] ?? [],
-                  Colors.orange,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _miniBar(
-                  "Alert",
-                  alertHistoryPerCamera[currentCameraId] ?? [],
-                  Colors.redAccent,
-                ),
-              ),
-            ],
-          ),
+          const SizedBox(height: 2),
         ],
-      ),
-    );
-  }
-
-  Widget _miniBar(String label, List<double> values, Color color) {
-    return Container(
-      height: 60,
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: values.map((v) {
-          double h = (v.clamp(0, 1)) * 50;
-          return Expanded(
-            child: Container(height: h, margin: const EdgeInsets.symmetric(horizontal: 1), color: color),
-          );
-        }).toList(),
       ),
     );
   }

@@ -11,9 +11,12 @@ class NotifSettingsPage extends StatefulWidget {
 }
 
 class _NotifSettingsPageState extends State<NotifSettingsPage> {
-  bool _sendViaSms = false;
   final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _notificationEmailController =
+      TextEditingController();
+  final List<TextEditingController> _additionalEmailControllers = [];
   bool _isLoading = true;
+  bool _isSendingTestEmail = false;
 
   final _auth = FirebaseAuth.instance;
   final _firestore = FirebaseFirestore.instance;
@@ -23,6 +26,61 @@ class _NotifSettingsPageState extends State<NotifSettingsPage> {
   void initState() {
     super.initState();
     _loadUserSettings();
+  }
+
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    _notificationEmailController.dispose();
+    for (final controller in _additionalEmailControllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  List<String> _collectAdditionalEmails() {
+    return _additionalEmailControllers
+        .map((c) => c.text.trim().toLowerCase())
+        .where((email) => email.isNotEmpty)
+        .toList();
+  }
+
+  void _addAdditionalEmailField([String initialValue = ""]) {
+    final controller = TextEditingController(text: initialValue);
+    _additionalEmailControllers.add(controller);
+  }
+
+  void _removeAdditionalEmailField(int index) {
+    final controller = _additionalEmailControllers.removeAt(index);
+    controller.dispose();
+  }
+
+  bool _isValidEmail(String email) {
+    final regex = RegExp(r"^[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}$");
+    return regex.hasMatch(email.trim());
+  }
+
+  String? _normalizePhone(String raw) {
+    final cleaned = raw.replaceAll(RegExp(r'[^0-9+]'), '');
+    if (cleaned.isEmpty) return null;
+
+    if (RegExp(r'^\+639\d{9}$').hasMatch(cleaned)) {
+      return cleaned;
+    }
+
+    if (RegExp(r'^639\d{9}$').hasMatch(cleaned)) {
+      return '+$cleaned';
+    }
+
+    if (RegExp(r'^09\d{9}$').hasMatch(cleaned)) {
+      return '+63${cleaned.substring(1)}';
+    }
+
+    return null;
+  }
+
+  String _phoneFormatHint() {
+    return 'Use PH mobile format: +639XXXXXXXXX, 639XXXXXXXXX, or 09XXXXXXXXX';
   }
 
   Future<void> _loadUserSettings() async {
@@ -45,8 +103,21 @@ class _NotifSettingsPageState extends State<NotifSettingsPage> {
         _docId = doc.id;
 
         setState(() {
-          _sendViaSms = data['sendViaSms'] ?? false;
-          _phoneController.text = data['phoneNumber'] ?? '';
+          _phoneController.text =
+              (data['phoneNumber'] ?? data['contact'] ?? '').toString();
+          _notificationEmailController.text =
+              (data['notificationEmail'] ?? user.email ?? '').toString();
+
+          for (final controller in _additionalEmailControllers) {
+            controller.dispose();
+          }
+          _additionalEmailControllers.clear();
+
+          final additionalEmails =
+              List<String>.from(data['additionalEmails'] ?? []);
+          for (final email in additionalEmails) {
+            _addAdditionalEmailField(email);
+          }
         });
       }
     } catch (e) {
@@ -58,11 +129,39 @@ class _NotifSettingsPageState extends State<NotifSettingsPage> {
 
   Future<void> _saveSettings() async {
     final phone = _phoneController.text.trim();
+    final notificationEmail = _notificationEmailController.text
+        .trim()
+        .toLowerCase();
+    final additionalEmails = _collectAdditionalEmails();
 
-    if (_sendViaSms && phone.isEmpty) {
-      _showSnackBar("Please enter your phone number.", Colors.red);
+    final normalizedPrimary = phone.isEmpty ? null : _normalizePhone(phone);
+    if (phone.isNotEmpty && normalizedPrimary == null) {
+      _showSnackBar(
+        "Invalid phone number. ${_phoneFormatHint()}",
+        Colors.red,
+      );
       return;
     }
+
+    if (notificationEmail.isEmpty || !_isValidEmail(notificationEmail)) {
+      _showSnackBar("Please enter a valid notification email.", Colors.red);
+      return;
+    }
+
+    final invalidEmail = additionalEmails.firstWhere(
+      (email) => !_isValidEmail(email),
+      orElse: () => "",
+    );
+
+    if (invalidEmail.isNotEmpty) {
+      _showSnackBar("Invalid email: $invalidEmail", Colors.red);
+      return;
+    }
+
+    final dedupedAdditionalEmails = additionalEmails
+        .where((email) => email != notificationEmail)
+        .toSet()
+        .toList();
 
     showDialog(
       context: context,
@@ -75,8 +174,11 @@ class _NotifSettingsPageState extends State<NotifSettingsPage> {
       if (user == null || _docId == null) return;
 
       await _firestore.collection('users').doc(_docId).update({
-        'sendViaSms': _sendViaSms,
-        'phoneNumber': _sendViaSms ? phone : "",
+        'sendViaSms': false,
+        'phoneNumber': normalizedPrimary ?? "",
+        'notificationEmail': notificationEmail,
+        'additionalEmails': dedupedAdditionalEmails,
+        'additionalPhoneNumbers': [],
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -96,6 +198,107 @@ class _NotifSettingsPageState extends State<NotifSettingsPage> {
     } catch (e) {
       Navigator.pop(context);
       _showSnackBar("Something went wrong: $e", Colors.red);
+    }
+  }
+
+  Future<bool> _saveSettingsSilently() async {
+    final phone = _phoneController.text.trim();
+    final notificationEmail = _notificationEmailController.text
+        .trim()
+        .toLowerCase();
+    final additionalEmails = _collectAdditionalEmails();
+
+    final normalizedPrimary = phone.isEmpty ? null : _normalizePhone(phone);
+    if (phone.isNotEmpty && normalizedPrimary == null) {
+      _showSnackBar(
+        "Invalid phone number. ${_phoneFormatHint()}",
+        Colors.red,
+      );
+      return false;
+    }
+
+    if (notificationEmail.isEmpty || !_isValidEmail(notificationEmail)) {
+      _showSnackBar("Please enter a valid notification email.", Colors.red);
+      return false;
+    }
+
+    final invalidEmail = additionalEmails.firstWhere(
+      (email) => !_isValidEmail(email),
+      orElse: () => "",
+    );
+
+    if (invalidEmail.isNotEmpty) {
+      _showSnackBar("Invalid email: $invalidEmail", Colors.red);
+      return false;
+    }
+
+    final dedupedAdditionalEmails = additionalEmails
+        .where((email) => email != notificationEmail)
+        .toSet()
+        .toList();
+
+    final user = _auth.currentUser;
+    if (user == null || _docId == null) {
+      _showSnackBar("User settings not loaded. Please try again.", Colors.red);
+      return false;
+    }
+
+    await _firestore.collection('users').doc(_docId).update({
+      'sendViaSms': false,
+      'phoneNumber': normalizedPrimary ?? "",
+      'notificationEmail': notificationEmail,
+      'additionalEmails': dedupedAdditionalEmails,
+      'additionalPhoneNumbers': [],
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    return true;
+  }
+
+  Future<void> _sendTestEmail() async {
+    if (_isSendingTestEmail) return;
+
+    setState(() => _isSendingTestEmail = true);
+
+    try {
+      final saved = await _saveSettingsSilently();
+      if (!saved) return;
+
+      final requestRef = await _firestore.collection('email_test_requests').add({
+        'email': _auth.currentUser?.email,
+        'uid': _auth.currentUser?.uid,
+        'requestedAt': FieldValue.serverTimestamp(),
+        'status': 'pending',
+      });
+
+      final resultSnap = await requestRef
+          .snapshots()
+          .firstWhere((snap) {
+            final data = snap.data();
+            final status = (data?['status'] ?? '').toString().toLowerCase();
+            return status == 'sent' || status == 'failed';
+          })
+          .timeout(const Duration(seconds: 25));
+
+      final result = resultSnap.data() ?? {};
+      final status = (result['status'] ?? '').toString().toLowerCase();
+
+      if (status == 'sent') {
+        final recipientCount = result['recipientCount'] ?? 0;
+        _showSnackBar(
+          "Test email sent ($recipientCount recipient${recipientCount == 1 ? '' : 's'}).",
+          Colors.green,
+        );
+      } else {
+        final error = (result['error'] ?? 'Failed to send test email.').toString();
+        _showSnackBar(error, Colors.red);
+      }
+    } catch (e) {
+      _showSnackBar('Failed to send test email: $e', Colors.red);
+    } finally {
+      if (mounted) {
+        setState(() => _isSendingTestEmail = false);
+      }
     }
   }
 
@@ -222,24 +425,19 @@ class _NotifSettingsPageState extends State<NotifSettingsPage> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  SwitchListTile(
-                                    title: const Text(
-                                      "Send Notifications via SMS",
-                                      style: TextStyle(fontSize: 16),
+                                  Text(
+                                    "Emergency Contact Number",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: colorScheme.primary,
                                     ),
-                                    activeColor: colorScheme.primary,
-                                    value: _sendViaSms,
-                                    onChanged: (value) {
-                                      setState(() => _sendViaSms = value);
-                                    },
                                   ),
-                                  const SizedBox(height: 10),
+                                  const SizedBox(height: 8),
                                   TextField(
                                     controller: _phoneController,
-                                    enabled: _sendViaSms,
                                     keyboardType: TextInputType.phone,
                                     decoration: InputDecoration(
-                                      labelText: "Phone Number",
+                                      labelText: "Primary Contact Number",
                                       hintText: "+639123456789",
                                       prefixIcon: const Icon(Icons.phone),
                                       border: OutlineInputBorder(
@@ -247,17 +445,89 @@ class _NotifSettingsPageState extends State<NotifSettingsPage> {
                                       ),
                                     ),
                                   ),
-                                  if (!_sendViaSms)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 8.0),
-                                      child: Text(
-                                        "Enable 'Send via SMS' to enter a phone number.",
-                                        style: TextStyle(
-                                          color: Colors.grey[600],
-                                          fontSize: 13,
-                                        ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    "Primary Notification Email",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: colorScheme.primary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: _notificationEmailController,
+                                    keyboardType: TextInputType.emailAddress,
+                                    decoration: InputDecoration(
+                                      labelText: "Notification Email",
+                                      hintText: "name@example.com",
+                                      prefixIcon: const Icon(Icons.email_outlined),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(10),
                                       ),
                                     ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    "Additional Email Recipients",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: colorScheme.primary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  if (_additionalEmailControllers.isEmpty)
+                                    Text(
+                                      "No additional emails added.",
+                                      style: TextStyle(color: Colors.grey[600]),
+                                    ),
+                                  ...List.generate(
+                                    _additionalEmailControllers.length,
+                                    (index) => Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: TextField(
+                                              controller:
+                                                  _additionalEmailControllers[index],
+                                              keyboardType: TextInputType.emailAddress,
+                                              decoration: InputDecoration(
+                                                labelText: "Email ${index + 1}",
+                                                hintText: "name@example.com",
+                                                prefixIcon: const Icon(Icons.alternate_email),
+                                                border: OutlineInputBorder(
+                                                  borderRadius: BorderRadius.circular(10),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          IconButton(
+                                            onPressed: () {
+                                              setState(() {
+                                                _removeAdditionalEmailField(index);
+                                              });
+                                            },
+                                            icon: const Icon(Icons.remove_circle_outline),
+                                            color: Colors.red,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: OutlinedButton.icon(
+                                      onPressed: () {
+                                        setState(() {
+                                          _addAdditionalEmailField();
+                                        });
+                                      },
+                                      icon: const Icon(Icons.add),
+                                      label: const Text("Add Email"),
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -279,6 +549,37 @@ class _NotifSettingsPageState extends State<NotifSettingsPage> {
                                     color: Colors.white,
                                     fontWeight: FontWeight.bold,
                                     fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: OutlinedButton.icon(
+                                onPressed: _isSendingTestEmail ? null : _sendTestEmail,
+                                icon: _isSendingTestEmail
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.mark_email_read_outlined),
+                                label: Text(
+                                  _isSendingTestEmail
+                                      ? "Sending Test Email..."
+                                      : "Send Test Email",
+                                  style: TextStyle(
+                                    color: colorScheme.primary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: colorScheme.primary),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
                                   ),
                                 ),
                               ),

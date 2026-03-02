@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -17,8 +18,14 @@ class ForegroundAITaskHandler extends TaskHandler {
   DatabaseReference? _yoloRef;
   DatabaseReference? _sensorRef;
   DatabaseReference? _rtdb;
-  Timer? _timer;
   FlutterLocalNotificationsPlugin? _localNotifications;
+  bool _isInferenceRunning = false;
+  final Map<String, int> _eventNotificationCounts = {};
+  final Map<String, DateTime> _lastNotificationTimeByCamera = {};
+  DateTime? _lastAlertTime;
+  static const int _maxNotificationsPerEvent = 2;
+  static const Duration _eventResetSilence = Duration(minutes: 2);
+  static const Duration _notificationCooldown = Duration(seconds: 45);
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -89,9 +96,6 @@ class ForegroundAITaskHandler extends TaskHandler {
       );
       print('✅ Service ready, starting inference loop');
 
-      // Start periodic inference (every 5 seconds)
-      _timer = Timer.periodic(Duration(seconds: 5), (_) => _runInference());
-      
       // Run first inference immediately
       await _runInference();
       
@@ -106,8 +110,15 @@ class ForegroundAITaskHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) {
-    // This is called every interval set in notificationInterval
-    // We use Timer instead for more control
+    if (_isInferenceRunning) {
+      return;
+    }
+    _isInferenceRunning = true;
+    unawaited(
+      _runInference().whenComplete(() {
+        _isInferenceRunning = false;
+      }),
+    );
   }
 
   Future<void> _runInference() async {
@@ -169,9 +180,14 @@ class ForegroundAITaskHandler extends TaskHandler {
           body: 'Camera: $cameraId | Severity: ${(severity * 100).toStringAsFixed(1)}%',
           severity: severity,
           isExtreme: dangerousNow,
+          eventKey: '$cameraId|$label',
+          cameraId: cameraId,
         );
         print('🔥 AI: $label (Camera: $cameraId | Severity: ${(severity * 100).toStringAsFixed(1)}%, Alert: ${(alert * 100).toStringAsFixed(1)}%)');
       } else {
+        _eventNotificationCounts.clear();
+        _lastNotificationTimeByCamera.remove(cameraId);
+        _lastAlertTime = null;
         print('✅ Status: NORMAL (Camera: $cameraId)');
       }
     } catch (e) {
@@ -189,22 +205,44 @@ class ForegroundAITaskHandler extends TaskHandler {
     required String body,
     required double severity,
     required bool isExtreme,
+    required String eventKey,
+    required String cameraId,
   }) async {
     try {
+      final now = DateTime.now();
+
+      final lastForCamera = _lastNotificationTimeByCamera[cameraId];
+      if (lastForCamera != null &&
+          now.difference(lastForCamera) < _notificationCooldown) {
+        return;
+      }
+
+      if (_lastAlertTime != null &&
+          now.difference(_lastAlertTime!) > _eventResetSilence) {
+        _eventNotificationCounts.clear();
+      }
+
+      final int currentCount = _eventNotificationCounts[eventKey] ?? 0;
+
+      if (currentCount >= _maxNotificationsPerEvent) {
+        return;
+      }
+
       final int notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      const AndroidNotificationDetails androidDetails =
+      final AndroidNotificationDetails androidDetails =
           AndroidNotificationDetails(
         'apula_foreground_alerts',
         'APULA Fire Alerts',
         channelDescription: 'Real-time fire detection alerts',
-        importance: Importance.high,
-        priority: Priority.high,
+        importance: Importance.max,
+        priority: Priority.max,
         showWhen: true,
         enableVibration: true,
         playSound: true,
+        vibrationPattern: Int64List.fromList([0, 1100, 300, 1100, 300, 1300, 300, 1300]),
       );
 
-      const NotificationDetails notificationDetails =
+      final NotificationDetails notificationDetails =
           NotificationDetails(android: androidDetails);
 
       await _localNotifications!.show(
@@ -213,6 +251,10 @@ class ForegroundAITaskHandler extends TaskHandler {
         body,
         notificationDetails,
       );
+
+      _eventNotificationCounts[eventKey] = currentCount + 1;
+      _lastNotificationTimeByCamera[cameraId] = now;
+      _lastAlertTime = now;
 
       print('📲 Alert notification shown: $title');
     } catch (e) {
@@ -223,7 +265,6 @@ class ForegroundAITaskHandler extends TaskHandler {
   @override
   Future<void> onDestroy(DateTime timestamp) async {
     print('🛑 Foreground AI Service Stopped');
-    _timer?.cancel();
     _interpreter?.close();
   }
 

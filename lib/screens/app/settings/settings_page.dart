@@ -238,48 +238,33 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
 
-                    // 👤 Profile Picture
+                    // � APULA Logo
                     Positioned(
                       top: -55,
                       left: 0,
                       right: 0,
                       child: Center(
-                        child: Stack(
-                          alignment: Alignment.bottomRight,
-                          children: [
-                            const CircleAvatar(
-                              radius: 55,
-                              backgroundImage: AssetImage(
-                                'assets/examples/profile_pic.jpg',
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isDarkMode
+                                ? Colors.grey[900]
+                                : Colors.white,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
                               ),
-                              backgroundColor: Colors.transparent,
-                            ),
-                            Positioned(
-                              bottom: 6,
-                              right: 6,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: isDarkMode
-                                      ? Colors.grey[850]
-                                      : Colors.white,
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
-                                      blurRadius: 3,
-                                      offset: const Offset(0, 1),
-                                    ),
-                                  ],
-                                ),
-                                child: const Icon(
-                                  Icons.edit,
-                                  size: 18,
-                                  color: redColor,
-                                ),
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
+                          child: const Image(
+                            image: AssetImage('assets/logo.png'),
+                            width: 100,
+                            height: 100,
+                            fit: BoxFit.contain,
+                          ),
                         ),
                       ),
                     ),
