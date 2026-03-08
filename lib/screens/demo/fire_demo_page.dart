@@ -20,6 +20,7 @@ class FireDemoPage extends StatefulWidget {
 class _FireDemoPageState extends State<FireDemoPage> {
   final DatabaseReference _rtdb =
       FirebaseDatabase.instanceFor(app: yoloFirebaseApp).ref();
+  static const String _demoCameraId = 'cam_01';
 
   // =========================
   // VIDEO STATE
@@ -299,7 +300,7 @@ class _FireDemoPageState extends State<FireDemoPage> {
         };
     }
 
-    await _rtdb.child("sensor_data/latest").set(entry);
+    await _rtdb.child("sensor_data/$_demoCameraId/latest").set(entry);
 
     setState(() {
       _status = "SENT:\n${const JsonEncoder.withIndent("  ").convert(entry)}";

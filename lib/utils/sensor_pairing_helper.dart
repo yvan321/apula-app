@@ -4,8 +4,12 @@ import '../main.dart';
 
 /// Helper class to manage sensor-camera pairing
 class SensorPairingHelper {
-  static DatabaseReference get _sensorRef =>
-      FirebaseDatabase.instanceFor(app: yoloFirebaseApp).ref('sensor_data/latest');
+  static DatabaseReference _sensorRefForCamera(String cameraId) =>
+      FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
+          .ref('sensor_data/$cameraId/latest');
+
+  static DatabaseReference get _sensorRootRef =>
+      FirebaseDatabase.instanceFor(app: yoloFirebaseApp).ref('sensor_data');
 
   /// Get sensor data for a specific camera, with smart fallback
   /// 
@@ -15,7 +19,12 @@ class SensorPairingHelper {
   /// 3. If no sensors, return null
   static Future<Map<String, dynamic>?> getSensorForCamera(String cameraId) async {
     try {
-      final snapshot = await _sensorRef.get();
+      var snapshot = await _sensorRefForCamera(cameraId).get();
+      if (!snapshot.exists || snapshot.value == null) {
+        snapshot = await FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
+            .ref('sensor_data/latest')
+            .get();
+      }
       
       if (!snapshot.exists || snapshot.value == null) {
         return null;
@@ -37,9 +46,7 @@ class SensorPairingHelper {
         return sensorMap;
       }
       
-      // Case 2: Multiple sensors (if structure changes later)
-      // This allows for future expansion where you might have:
-      // sensor_data/latest/cam_01/{data}, sensor_data/latest/cam_02/{data}
+      // Case 2: Unexpected structure
       
       return null;
     } catch (e) {
@@ -53,22 +60,33 @@ class SensorPairingHelper {
     String cameraId,
     Function(Map<String, dynamic>?) onData,
   ) {
-    return _sensorRef.onValue.listen((event) {
+    return _sensorRefForCamera(cameraId).onValue.listen((event) {
       if (event.snapshot.value == null) {
-        onData(null);
+        // Legacy fallback for older schema
+        FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
+            .ref('sensor_data/latest')
+            .get()
+            .then((fallbackSnap) {
+          if (!fallbackSnap.exists || fallbackSnap.value == null) {
+            onData(null);
+            return;
+          }
+
+          final fallback = fallbackSnap.value;
+          if (fallback is Map) {
+            onData(Map<String, dynamic>.from(fallback));
+            return;
+          }
+
+          onData(null);
+        });
         return;
       }
 
       final data = event.snapshot.value;
       if (data is Map) {
-        final sensorMap = Map<String, dynamic>.from(data);
-        final sensorId = sensorMap['sensor_id']?.toString() ?? '';
-        
-        // Check if this sensor matches the camera or use as fallback
-        if (sensorId == cameraId || sensorId.isNotEmpty) {
-          onData(sensorMap);
-          return;
-        }
+        onData(Map<String, dynamic>.from(data));
+        return;
       }
       
       onData(null);
@@ -78,7 +96,7 @@ class SensorPairingHelper {
   /// Get all available sensors
   static Future<List<Map<String, dynamic>>> getAllSensors() async {
     try {
-      final snapshot = await _sensorRef.get();
+      final snapshot = await _sensorRootRef.get();
       
       if (!snapshot.exists || snapshot.value == null) {
         return [];
@@ -86,7 +104,21 @@ class SensorPairingHelper {
 
       final data = snapshot.value;
       if (data is Map) {
-        return [Map<String, dynamic>.from(data)];
+        final sensors = <Map<String, dynamic>>[];
+
+        for (final entry in data.entries) {
+          final key = entry.key.toString();
+          final value = entry.value;
+
+          if (value is Map && value['latest'] is Map) {
+            sensors.add(Map<String, dynamic>.from(value['latest'] as Map)
+              ..putIfAbsent('camera_id', () => key));
+          } else if (key == 'latest' && value is Map) {
+            sensors.add(Map<String, dynamic>.from(value));
+          }
+        }
+
+        return sensors;
       }
       
       return [];

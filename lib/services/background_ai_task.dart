@@ -81,20 +81,33 @@ Future<Map<String, String>?> _runBackgroundAI() async {
   final yoloApp = Firebase.app('yoloApp');
   final rtdb = FirebaseDatabase.instanceFor(app: yoloApp);
   final yoloSnap = await rtdb.ref("cam_detections/latest").get();
-  final sensorSnap = await rtdb.ref("sensor_data/latest").get();
   print("📡 Fetching data from yoloApp RTDB");
 
-  if (!yoloSnap.exists || !sensorSnap.exists) {
+  if (!yoloSnap.exists) {
     print("⚠️ No data available");
     interpreter.close();
     return null;
   }
 
   final yoloData = yoloSnap.value as Map;
-  final sensorData = sensorSnap.value as Map;
 
   // Extract camera_id from YOLO data
   final String cameraId = yoloData["camera_id"]?.toString() ?? "cam_01";
+
+  // Camera-scoped sensor path: sensor_data/{cameraId}/latest
+  // Keep legacy fallback for backward compatibility.
+  DataSnapshot sensorSnap = await rtdb.ref("sensor_data/$cameraId/latest").get();
+  if (!sensorSnap.exists) {
+    sensorSnap = await rtdb.ref("sensor_data/latest").get();
+  }
+
+  if (!sensorSnap.exists) {
+    print("⚠️ No sensor data available for $cameraId");
+    interpreter.close();
+    return null;
+  }
+
+  final sensorData = sensorSnap.value as Map;
 
   // Build input features - matching background_cnn_service.dart field names
   List<double> features = [

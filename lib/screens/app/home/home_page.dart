@@ -164,9 +164,23 @@ class _HomePageState extends State<HomePage> {
     final rtdb = FirebaseDatabase.instanceFor(app: yoloFirebaseApp);
 
     // Temperature listener
-    _sensorSub = rtdb.ref('sensor_data/latest').onValue.listen((event) {
-      final map = (event.snapshot.value ?? {}) as Map;
-      final temp = _toInt(map['DHT_Temp']);
+    _sensorSub = rtdb.ref('sensor_data').onValue.listen((event) {
+      final root = event.snapshot.value;
+      Map<String, dynamic> sensorMap = {};
+
+      if (root is Map) {
+        final preferredCameraId =
+            _availableDevices.isNotEmpty ? _availableDevices.first : 'cam_01';
+
+        final preferredNode = root[preferredCameraId];
+        if (preferredNode is Map && preferredNode['latest'] is Map) {
+          sensorMap = Map<String, dynamic>.from(preferredNode['latest'] as Map);
+        } else if (root['latest'] is Map) {
+          sensorMap = Map<String, dynamic>.from(root['latest'] as Map);
+        }
+      }
+
+      final temp = _toInt(sensorMap['DHT_Temp']);
       setState(() => _roomTemp = temp);
     });
 

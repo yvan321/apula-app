@@ -8,7 +8,6 @@ class BackgroundCnnService {
   static Interpreter? _interpreter;
 
   static late DatabaseReference _yoloRef;
-  static late DatabaseReference _sensorRef;
   static late DatabaseReference _rtdb;
 
   static final List<double> _mean = [
@@ -37,7 +36,6 @@ class BackgroundCnnService {
     final rtdb = FirebaseDatabase.instanceFor(app: app);
     _rtdb = rtdb.ref();
     _yoloRef = rtdb.ref("cam_detections/latest");
-    _sensorRef = rtdb.ref("sensor_data/latest");
 
     _startLoop();
   }
@@ -47,27 +45,25 @@ class BackgroundCnnService {
       if (!_running || _interpreter == null) return;
 
       final yoloSnap = await _yoloRef.get();
-      final sensorSnap = await _sensorRef.get();
       if (!yoloSnap.exists) return;
 
       final yolo = Map<String, dynamic>.from(yoloSnap.value as Map);
       
       // Extract camera_id from YOLO data
       final String cameraId = yolo["camera_id"]?.toString() ?? "cam_01";
+
+      // Read camera-scoped sensor path first: sensor_data/{cameraId}/latest
+      DataSnapshot sensorSnap = await _rtdb.child("sensor_data/$cameraId/latest").get();
+      if (!sensorSnap.exists) {
+        sensorSnap = await _rtdb.child("sensor_data/latest").get();
+      }
       
-      // Get sensor data for this camera (or shared sensor)
+      // Get sensor data for this camera (or legacy shared sensor fallback)
       final Map<String, dynamic> sensor = sensorSnap.exists
           ? Map<String, dynamic>.from(sensorSnap.value as Map)
           : <String, dynamic>{};
-      
-      // Try to get camera-specific sensor data first
-      Map<String, dynamic> cameraSensor = <String, dynamic>{};
-      if (sensor.containsKey(cameraId)) {
-        cameraSensor = Map<String, dynamic>.from(sensor[cameraId] as Map);
-      } else {
-        // Fall back to shared sensor data (no camera_id key)
-        cameraSensor = sensor;
-      }
+
+      final Map<String, dynamic> cameraSensor = sensor;
 
       final List<double> raw = [
         (yolo["yolo_conf"] ?? 0).toDouble(),

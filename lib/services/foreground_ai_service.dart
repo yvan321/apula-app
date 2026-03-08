@@ -77,7 +77,7 @@ class ForegroundAITaskHandler extends TaskHandler {
       final rtdb = FirebaseDatabase.instanceFor(app: yoloApp);
       _rtdb = rtdb.ref();
       _yoloRef = rtdb.ref("cam_detections/latest");
-      _sensorRef = rtdb.ref("sensor_data/latest");
+      _sensorRef = rtdb.ref("sensor_data");
       print('✅ Firebase RTDB refs created from yoloApp');
 
       // Initialize local notifications
