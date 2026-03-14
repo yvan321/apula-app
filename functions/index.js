@@ -91,11 +91,20 @@ function getEmailTransporter() {
   return _emailTransporter;
 }
 
-function buildAlertEmailContent({ title, device, severity, alertLevel, snapshotUrl }) {
+function formatDominantSource(source) {
+  const normalized = String(source || "unknown").trim().toLowerCase();
+  if (normalized === "cctv") return "CCTV / Vision";
+  if (normalized === "sensor") return "Sensor / IoT";
+  if (normalized === "mixed") return "Mixed (both)";
+  return "Unknown";
+}
+
+function buildAlertEmailContent({ title, device, severity, alertLevel, snapshotUrl, dominantSource }) {
   const safeDevice = String(device || "Unknown");
   const severityText = `${(severity * 100).toFixed(1)}%`;
   const alertText = `${(alertLevel * 100).toFixed(1)}%`;
   const safeSnapshotUrl = String(snapshotUrl || "").trim();
+  const sourceText = formatDominantSource(dominantSource);
 
   const subject = `APULA Alert: ${title.replace(/^[^A-Za-z0-9]+\s*/, "")}`;
   const text = [
@@ -103,6 +112,7 @@ function buildAlertEmailContent({ title, device, severity, alertLevel, snapshotU
     `Device: ${safeDevice}`,
     `Severity: ${severityText}`,
     `Alert Score: ${alertText}`,
+    `Likely Trigger: ${sourceText}`,
     safeSnapshotUrl ? `Snapshot: ${safeSnapshotUrl}` : null,
     "Please check APULA immediately.",
   ].filter(Boolean).join("\n");
@@ -113,6 +123,7 @@ function buildAlertEmailContent({ title, device, severity, alertLevel, snapshotU
       <p style="margin:0 0 4px;"><strong>Device:</strong> ${safeDevice}</p>
       <p style="margin:0 0 4px;"><strong>Severity:</strong> ${severityText}</p>
       <p style="margin:0 0 12px;"><strong>Alert Score:</strong> ${alertText}</p>
+      <p style="margin:0 0 12px;"><strong>Likely Trigger:</strong> ${sourceText}</p>
       ${safeSnapshotUrl ? `<p style="margin:0 0 12px;"><a href="${safeSnapshotUrl}">View snapshot</a></p>` : ""}
       <p style="margin:0;">Please check APULA immediately.</p>
     </div>
@@ -263,6 +274,8 @@ exports.sendAlertNotificationOnCreate = functions.firestore
 
       const severity = alert.severity || 0;
       const alertLevel = alert.alert || 0;
+      const dominantSource = alert.dominantSource || alert.source || "unknown";
+      const sourceLabel = formatDominantSource(dominantSource);
 
       if (severity >= 0.70 && alertLevel >= 0.80) {
         title = "🔴 EXTREME FIRE DANGER";
@@ -278,22 +291,31 @@ exports.sendAlertNotificationOnCreate = functions.firestore
       const sendTasks = [];
 
       if (fcmToken) {
+        const snapshotUrl = alert.snapshotUrl || "";
         const message = {
           token: fcmToken,
           notification: {
             title: title,
-            body: `${alert.device || "Unknown"} | Severity: ${(severity * 100).toFixed(1)}%`,
+            body: `${alert.device || "Unknown"} | Severity: ${(severity * 100).toFixed(1)}% | Source: ${sourceLabel}`,
           },
           data: {
+            alertId: context.params.alertId,
             title: title,
             device: alert.device || "Unknown",
             severity: String(severity),
             alert: String(alertLevel),
-            snapshotUrl: alert.snapshotUrl || "",
+            dominantSource: String(dominantSource),
+            dominantSourceLabel: sourceLabel,
+            source: String(dominantSource),
+            sourceLabel,
+            snapshotUrl: snapshotUrl,
             type: alert.type || "FIRE_ALERT",
           },
           webpush: {
             priority: priority,
+            data: {
+              alertId: context.params.alertId,
+            }
           },
           apns: {
             headers: {
@@ -302,6 +324,21 @@ exports.sendAlertNotificationOnCreate = functions.firestore
             aps: {
               badge: 1,
               sound: "default",
+            },
+            fcmOptions: {
+              analyticsLabel: "fire_alert",
+            },
+          },
+          android: {
+            priority: priority === "high" ? "high" : "normal",
+            data: {
+              alertId: context.params.alertId,
+            },
+            notification: {
+              imageUrl: snapshotUrl || undefined,
+              title: title,
+              body: `${alert.device || "Unknown"} | Severity: ${(severity * 100).toFixed(1)}%`,
+              clickAction: "FLUTTER_NOTIFICATION_CLICK",
             },
           },
         };
@@ -340,6 +377,7 @@ exports.sendAlertNotificationOnCreate = functions.firestore
                 severity,
                 alertLevel,
                 snapshotUrl: alert.snapshotUrl || "",
+                dominantSource,
               });
 
               sendTasks.push(

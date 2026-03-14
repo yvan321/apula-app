@@ -229,7 +229,7 @@ class _HomePageState extends State<HomePage> {
   void _startCnnListener() {
     if (_availableDevices.isEmpty) return;
 
-    CnnListenerService.startListening(_availableDevices, (cameraId, alert, severity, snapshotUrl) {
+    CnnListenerService.startListening(_availableDevices, (cameraId, alert, severity, snapshotUrl, dominantSource) {
       _persistHistoryIfNeeded(cameraId, alert, severity, snapshotUrl);
 
       // Trigger global fire modal if severity is high
@@ -238,6 +238,7 @@ class _HomePageState extends State<HomePage> {
         severity: severity,
         snapshotUrl: snapshotUrl,
         deviceName: cameraId,
+        dominantSource: dominantSource,
       );
 
       setState(() {

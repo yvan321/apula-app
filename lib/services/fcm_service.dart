@@ -1,7 +1,9 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:apula/screens/app/notification/notification_page.dart';
 import '../main.dart';
 
 class FcmService {
@@ -107,9 +109,23 @@ class FcmService {
     print('🔔 Message opened from terminated state:');
     print('  Title: ${message.notification?.title}');
     print('  Body: ${message.notification?.body}');
+    print('  Data: ${message.data}');
 
-    // Navigate to alerts page or relevant screen
-    navigatorKey.currentState?.pushNamed('/home');
+    final alertId = message.data['alertId'];
+    if (alertId != null && alertId.isNotEmpty) {
+      navigatorKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (_) => const NotificationPage(availableDevices: []),
+          settings: RouteSettings(arguments: {'alertId': alertId}),
+        ),
+        (route) => false,
+      );
+    } else {
+      navigatorKey.currentState?.pushNamedAndRemoveUntil(
+        '/home',
+        (route) => false,
+      );
+    }
   }
 
   /// Show local notification

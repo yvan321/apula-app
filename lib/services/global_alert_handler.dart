@@ -13,6 +13,8 @@ class GlobalAlertHandler {
   static DateTime? _cautionSnoozeUntil;
   static const Duration modalCooldown = Duration(seconds: 30);
   static const Duration cautionSnoozeDuration = Duration(minutes: 5);
+  static final ValueNotifier<bool> modalOpenListenable = ValueNotifier<bool>(false);
+  static int _activeModalCount = 0;
 
   // Stability counters
   static int _dangerCounter = 0;
@@ -22,6 +24,21 @@ class GlobalAlertHandler {
   // ✅ SINGLE DISPATCH GUARD (FIX)
   static bool _dispatcherAlertSent = false;
 
+  static bool get hasActiveModal => modalOpenListenable.value;
+
+  static String _sourceLabel(String source) {
+    final normalized = source.toLowerCase();
+    if (normalized == "cctv") return "CCTV / Vision";
+    if (normalized == "sensor") return "Sensor / IoT";
+    if (normalized == "mixed") return "Mixed (both)";
+    return "Unknown";
+  }
+
+  static Color _dialogActionColor(BuildContext context) {
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    return isDarkMode ? Colors.white : const Color(0xFFA30000);
+  }
+
   // =======================================================
   // MAIN ENTRY POINT
   // =======================================================
@@ -30,6 +47,7 @@ class GlobalAlertHandler {
     required double severity,
     required String snapshotUrl,
     String deviceName = "Unknown Camera",
+    String dominantSource = "unknown",
   }) async {
     print("🔥 FireModal | severity=$severity | alert=$alert");
 
@@ -116,6 +134,7 @@ class GlobalAlertHandler {
       deviceName,
       uid,
       alertType,
+      dominantSource,
     );
 
     // ===================================================
@@ -127,6 +146,7 @@ class GlobalAlertHandler {
         snapshotUrl,
         deviceName,
         alertType,
+        dominantSource: dominantSource,
       );
 
       _dispatcherAlertSent = true;
@@ -134,7 +154,7 @@ class GlobalAlertHandler {
       _ignitionCounter = 0;
 
       if (_shouldShowModalFor("dangerous")) {
-        _showHighModal(snapshotUrl, alertType, deviceName);
+        _showHighModal(snapshotUrl, alertType, deviceName, dominantSource);
       }
       return;
     }
@@ -148,6 +168,7 @@ class GlobalAlertHandler {
         snapshotUrl,
         deviceName,
         alertType,
+        dominantSource,
       );
     }
   }
@@ -175,6 +196,7 @@ class GlobalAlertHandler {
     String deviceName,
     String? uid,
     String type,
+    String dominantSource,
   ) async {
     await FirebaseFirestore.instance.collection("user_alerts").add({
       "alert": alert,
@@ -182,6 +204,10 @@ class GlobalAlertHandler {
       "type": type,
       "snapshotUrl": snapshotUrl,
       "device": deviceName,
+      "deviceName": deviceName,
+      "dominantSource": dominantSource,
+      "source": dominantSource,
+      "sourceLabel": _sourceLabel(dominantSource),
       "timestamp": FieldValue.serverTimestamp(),
       "read": false,
       "userId": uid,
@@ -194,13 +220,16 @@ class GlobalAlertHandler {
     String snapshotUrl,
     String deviceName,
     String alertType,
-    {String? description}
+    {String? description, String dominantSource = "unknown"}
   ) async {
     await FirebaseFirestore.instance.collection("alerts").add({
       "type": alertType,
       "location": deviceName,
       "description": description ?? "Fire detected in $deviceName",
       "snapshotUrl": snapshotUrl,
+      "dominantSource": dominantSource,
+      "source": dominantSource,
+      "sourceLabel": _sourceLabel(dominantSource),
       "status": "Pending",
       "timestamp": FieldValue.serverTimestamp(),
       "read": false,
@@ -217,6 +246,9 @@ class GlobalAlertHandler {
   // MODAL HELPERS
   // =======================================================
   static bool _shouldShowModalFor(String type) {
+    if (hasActiveModal) {
+      return false;
+    }
     if (type == "dangerous") {
       return true;
     }
@@ -237,6 +269,22 @@ class GlobalAlertHandler {
   static void _recordModalShown(String type) {
     _lastModalTime = DateTime.now();
     _lastModalType = type;
+  }
+
+  static void _beginModal() {
+    _activeModalCount += 1;
+    if (!modalOpenListenable.value) {
+      modalOpenListenable.value = true;
+    }
+  }
+
+  static void _endModal() {
+    if (_activeModalCount > 0) {
+      _activeModalCount -= 1;
+    }
+    if (_activeModalCount == 0 && modalOpenListenable.value) {
+      modalOpenListenable.value = false;
+    }
   }
 
   static BuildContext? _dialogContext() {
@@ -355,12 +403,14 @@ class GlobalAlertHandler {
     String snapshotUrl,
     String alertType,
     String cameraId,
+    String dominantSource,
   ) {
     final ctx = _dialogContext();
     if (ctx == null) return;
     final thermalUrlFuture = _fetchThermalSnapshotUrl(cameraId);
 
     _recordModalShown("dangerous");
+    _beginModal();
 
     showDialog(
       context: ctx,
@@ -374,6 +424,8 @@ class GlobalAlertHandler {
               _snapshotWidget(snapshotUrl),
               _thermalSnapshotWidget(thermalUrlFuture),
               const SizedBox(height: 12),
+              Text("Likely Trigger: ${_sourceLabel(dominantSource)}"),
+              const SizedBox(height: 8),
               const Text(
                 "Emergency responders have been notified automatically.",
               ),
@@ -382,12 +434,15 @@ class GlobalAlertHandler {
         ),
         actions: [
           TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: _dialogActionColor(ctx),
+            ),
             onPressed: () => Navigator.pop(ctx),
             child: const Text("OK"),
           ),
         ],
       ),
-    );
+    ).whenComplete(_endModal);
   }
 
   static void _showMediumModal(
@@ -395,12 +450,14 @@ class GlobalAlertHandler {
     String snapshotUrl,
     String deviceName,
     String alertType,
+    String dominantSource,
   ) {
     final ctx = _dialogContext();
     if (ctx == null) return;
     final thermalUrlFuture = _fetchThermalSnapshotUrl(deviceName);
 
     _recordModalShown("caution");
+    _beginModal();
 
     const Duration inactivityTimeout = Duration(seconds: 15);
     bool resolved = false;
@@ -436,6 +493,7 @@ class GlobalAlertHandler {
         deviceName,
         "🔥 FIRE ALERT (NO USER RESPONSE)",
         description: "Fire detected in $deviceName, user no response",
+        dominantSource: dominantSource,
       );
 
       _dispatcherAlertSent = true;
@@ -445,6 +503,7 @@ class GlobalAlertHandler {
           snapshotUrl,
           "Alert sent due to user no response.",
           deviceName,
+          dominantSource,
         );
       });
     });
@@ -486,6 +545,11 @@ class GlobalAlertHandler {
                   _thermalSnapshotWidget(thermalUrlFuture),
                   const SizedBox(height: 12),
                   const Text("Please confirm if this is a real fire."),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Likely Trigger: ${_sourceLabel(dominantSource)}",
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     "Auto-sending in ${remainingSeconds}s if no response.",
@@ -515,6 +579,9 @@ class GlobalAlertHandler {
             ),
             actions: [
               TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: _dialogActionColor(dialogCtx),
+                ),
                 onPressed: () {
                   resolved = true;
                   stopCountdown();
@@ -527,6 +594,10 @@ class GlobalAlertHandler {
                 child: const Text("FALSE ALARM"),
               ),
               ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFA30000),
+                  foregroundColor: Colors.white,
+                ),
                 onPressed: () async {
                   resolved = true;
                   stopCountdown();
@@ -546,6 +617,7 @@ class GlobalAlertHandler {
                     snapshotUrl,
                     deviceName,
                     "🔥 FIRE CONFIRMED BY USER",
+                    dominantSource: dominantSource,
                   );
 
                   _dispatcherAlertSent = true;
@@ -556,19 +628,21 @@ class GlobalAlertHandler {
           );
         },
       ),
-    );
+    ).whenComplete(_endModal);
   }
 
   static void _showAutoDispatchModal(
     String snapshotUrl,
     String message,
     String cameraId,
+    String dominantSource,
   ) {
     final ctx = _dialogContext();
     if (ctx == null) return;
     final thermalUrlFuture = _fetchThermalSnapshotUrl(cameraId);
 
     _recordModalShown("auto");
+    _beginModal();
 
     showDialog(
       context: ctx,
@@ -582,17 +656,22 @@ class GlobalAlertHandler {
               _snapshotWidget(snapshotUrl),
               _thermalSnapshotWidget(thermalUrlFuture),
               const SizedBox(height: 12),
+              Text("Likely Trigger: ${_sourceLabel(dominantSource)}"),
+              const SizedBox(height: 8),
               Text(message),
             ],
           ),
         ),
         actions: [
           TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: _dialogActionColor(ctx),
+            ),
             onPressed: () => Navigator.pop(ctx),
             child: const Text("OK"),
           ),
         ],
       ),
-    );
+    ).whenComplete(_endModal);
   }
 }

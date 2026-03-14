@@ -63,15 +63,6 @@
             android:exported="false"
             android:stopWithTask="false" />
 
-        <!-- Receiver for boot completed -->
-        <receiver
-            android:name="com.pravera.flutter_foreground_task.receiver.RestartReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
-
     </application>
 
     <queries>

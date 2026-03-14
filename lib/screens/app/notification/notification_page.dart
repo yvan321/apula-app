@@ -1,5 +1,7 @@
 // lib/screens/app/notification/notification_page.dart
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -20,6 +22,52 @@ class NotificationPage extends StatefulWidget {
 class _NotificationPageState extends State<NotificationPage> {
   String _filter = "All";
   static const Color red = Color(0xFFA30000);
+  bool _deepLinkHandled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Handle deep link from push notification tap
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_deepLinkHandled) {
+        _deepLinkHandled = true;
+        _handleDeepLinkAlert();
+      }
+    });
+  }
+
+  /// Handle alert ID passed from notification tap (deep link)
+  Future<void> _handleDeepLinkAlert() async {
+    try {
+      final args = ModalRoute.of(context)?.settings.arguments as Map?;
+      final alertId = args?['alertId'] as String?;
+      
+      if (alertId == null || alertId.isEmpty) return;
+      
+      print('📲 Opening alert from deep link: $alertId');
+      
+      // Fetch the user_alerts document
+      final doc = await FirebaseFirestore.instance
+          .collection('user_alerts')
+          .doc(alertId)
+          .get();
+      
+      if (!doc.exists) {
+        print('⚠️ Alert document not found: $alertId');
+        return;
+      }
+      
+      final data = doc.data() as Map<String, dynamic>;
+      
+      // Show the detail modal after a brief delay to ensure UI is ready
+      if (mounted) {
+        await Future.delayed(const Duration(milliseconds: 200));
+        _showDetails(alertId, data);
+      }
+    } catch (e) {
+      print('❌ Error handling deep link alert: $e');
+    }
+  }
 
   // Format timestamp to readable string
   String _formatTimestamp(dynamic timestamp) {
@@ -175,6 +223,9 @@ class _NotificationPageState extends State<NotificationPage> {
   // DETAILS POPUP (auto-mark as read)
   // ----------------------------------------------------------------------
   void _showDetails(String docId, Map<String, dynamic> data) async {
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final actionColor = isDarkMode ? Colors.white : red;
+
     // Mark as read when viewing
     if (!data["read"]) {
       try {
@@ -206,10 +257,20 @@ class _NotificationPageState extends State<NotificationPage> {
                   height: 150,
                   fit: BoxFit.cover,
                 ),
+              )
+            else if ((data["snapshotBase64"] ?? "").toString().isNotEmpty)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.memory(
+                  base64Decode(data["snapshotBase64"]),
+                  height: 150,
+                  fit: BoxFit.cover,
+                ),
               ),
             const SizedBox(height: 10),
             Text("Severity: ${data["severity"] ?? 0}"),
             Text("Alert Score: ${data["alert"] ?? 0}"),
+            Text("Likely Trigger: ${_sourceLabel((data["dominantSource"] ?? data["source"] ?? "unknown").toString())}"),
             const SizedBox(height: 10),
             const Text("Tap CLOSE to return."),
           ],
@@ -217,11 +278,20 @@ class _NotificationPageState extends State<NotificationPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("CLOSE", style: TextStyle(color: red)),
+            style: TextButton.styleFrom(foregroundColor: actionColor),
+            child: const Text("CLOSE"),
           ),
         ],
       ),
     );
+  }
+
+  String _sourceLabel(String source) {
+    final normalized = source.toLowerCase();
+    if (normalized == 'cctv') return 'CCTV / Vision';
+    if (normalized == 'sensor') return 'Sensor / IoT';
+    if (normalized == 'mixed') return 'Mixed (both)';
+    return 'Unknown';
   }
 
   // ----------------------------------------------------------------------

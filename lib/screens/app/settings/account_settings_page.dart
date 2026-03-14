@@ -42,11 +42,19 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     }
 
     try {
-      final query = await _firestore
+      QuerySnapshot<Map<String, dynamic>> query = await _firestore
           .collection('users')
-          .where('email', isEqualTo: user.email)
+          .where('uid', isEqualTo: user.uid)
           .limit(1)
           .get();
+
+      if (query.docs.isEmpty && user.email != null) {
+        query = await _firestore
+            .collection('users')
+            .where('email', isEqualTo: user.email)
+            .limit(1)
+            .get();
+      }
 
       if (query.docs.isNotEmpty) {
         final doc = query.docs.first;
@@ -105,7 +113,11 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
 
     try {
       final user = _auth.currentUser;
-      if (user == null || _docId == null) return;
+      if (user == null || _docId == null) {
+        Navigator.pop(context);
+        _showSnackBar("User session expired. Please log in again.", Colors.red);
+        return;
+      }
 
       await _firestore.collection('users').doc(_docId).update({
         'name': name,
@@ -113,6 +125,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
         'address': address,
         'latitude': selectedLat,
         'longitude': selectedLng,
+        'uid': user.uid,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -261,9 +274,11 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                                 );
 
                                 if (result != null && result is Map<String, dynamic>) {
-                                  _addressController.text = result["address"];
-                                  selectedLat = result["lat"];
-                                  selectedLng = result["lng"];
+                                  setState(() {
+                                    _addressController.text = (result["address"] ?? '').toString();
+                                    selectedLat = (result["lat"] as num?)?.toDouble();
+                                    selectedLng = (result["lng"] as num?)?.toDouble();
+                                  });
                                 }
                               },
                             ),

@@ -6,6 +6,7 @@ import 'package:workmanager/workmanager.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../firebase_yolo_options.dart';
+import 'package:apula/utils/alert_source_attribution.dart';
 
 // This function runs in a separate isolate
 @pragma('vm:entry-point')
@@ -123,6 +124,19 @@ Future<Map<String, String>?> _runBackgroundAI() async {
     (yoloData["yolo_no_fire_conf"] ?? 1.0).toDouble(),
   ];
 
+  final attribution = AlertSourceAttribution.fromSignals(
+    yoloConf: features[0],
+    temperature: features[1],
+    humidity: features[2],
+    mq2: features[3],
+    flame: features[4],
+    thermalMax: features[5],
+    thermalAvg: features[6],
+    yoloFireConf: features[7],
+    yoloSmokeConf: features[8],
+    yoloNoFireConf: features[9],
+  );
+
   // Normalize
   List<double> normalized = List.generate(
     features.length,
@@ -162,6 +176,22 @@ Future<Map<String, String>?> _runBackgroundAI() async {
     "prediction": label,
     "timestamp": DateTime.now().toIso8601String(),
     "source": "background_task",
+    "input": {
+      "image_url": yoloData["image_url"],
+      "yolo_conf": features[0],
+      "yolo_fire_conf": features[7],
+      "yolo_smoke_conf": features[8],
+      "yolo_no_fire_conf": features[9],
+    },
+    "sensor": {
+      "DHT_Temp": features[1],
+      "DHT_Humidity": features[2],
+      "MQ2_Value": features[3],
+      "Flame_Det": features[4],
+      "thermal_max": features[5],
+      "thermal_avg": features[6],
+    },
+    "attribution": attribution,
   });
 
   interpreter.close();

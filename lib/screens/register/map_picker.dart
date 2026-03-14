@@ -19,6 +19,8 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
 
   LatLng selected = LatLng(14.5995, 120.9842); // Default Manila
   String readableAddress = "Fetching address...";
+  bool _isResolvingAddress = false;
+  bool _isSearchingAddress = false;
 
   @override
   void initState() {
@@ -33,19 +35,41 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   }
 
   Future<void> _reverseGeocode(LatLng pos) async {
+    if (mounted) {
+      setState(() => _isResolvingAddress = true);
+    }
+
     final url = Uri.parse(
         "https://nominatim.openstreetmap.org/reverse?lat=${pos.latitude}&lon=${pos.longitude}&format=json");
 
-    final response = await http.get(url, headers: {
-      "User-Agent": "ApulaApp/1.0"
-    });
+    try {
+      final response = await http.get(url, headers: {
+        "User-Agent": "ApulaApp/1.0"
+      });
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        setState(() {
+          readableAddress = (data["display_name"] ?? "Unknown location").toString();
+        });
+      } else {
+        setState(() {
+          readableAddress = "Unable to resolve address right now";
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
 
       setState(() {
-        readableAddress = data["display_name"] ?? "Unknown location";
+        readableAddress = "Unable to resolve address right now";
       });
+    } finally {
+      if (mounted) {
+        setState(() => _isResolvingAddress = false);
+      }
     }
   }
 
@@ -53,33 +77,45 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
     String query = _searchController.text.trim();
     if (query.isEmpty) return;
 
-    final enhancedQuery = "$query, Bacoor, Cavite, Philippines";
+    if (mounted) {
+      setState(() => _isSearchingAddress = true);
+    }
 
     final url = Uri.parse(
-        "https://nominatim.openstreetmap.org/search?q=$enhancedQuery&format=json&limit=1");
+        "https://nominatim.openstreetmap.org/search?q=${Uri.encodeQueryComponent(query)}&format=json&limit=1");
 
-    final response = await http.get(url, headers: {
-      "User-Agent": "ApulaApp/1.0"
-    });
+    try {
+      final response = await http.get(url, headers: {
+        "User-Agent": "ApulaApp/1.0"
+      });
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
+      if (!mounted) return;
 
-      if (data.isNotEmpty) {
-        final lat = double.parse(data[0]["lat"]);
-        final lon = double.parse(data[0]["lon"]);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
 
-        setState(() {
-          selected = LatLng(lat, lon);
-        });
+        if (data is List && data.isNotEmpty) {
+          final lat = double.parse(data[0]["lat"].toString());
+          final lon = double.parse(data[0]["lon"].toString());
 
-        _mapController.move(selected, 17);
-        _reverseGeocode(selected);
+          setState(() {
+            selected = LatLng(lat, lon);
+          });
+
+          _mapController.move(selected, 17);
+          await _reverseGeocode(selected);
+        } else {
+          _showMessage("No results found. Try a more complete address.");
+        }
       } else {
-        _showMessage("No results found. Try adding street or barangay.");
+        _showMessage("Search is temporarily unavailable. Please try again.");
       }
-    } else {
-      _showMessage("Search failed. Check your internet.");
+    } catch (_) {
+      _showMessage("Search failed right now. Please try again.");
+    } finally {
+      if (mounted) {
+        setState(() => _isSearchingAddress = false);
+      }
     }
   }
 
@@ -148,11 +184,20 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: _searchAddress,
+                  onPressed: _isSearchingAddress ? null : _searchAddress,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFA30000),
                   ),
-                  child: const Icon(Icons.search, color: Colors.white),
+                  child: _isSearchingAddress
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Icon(Icons.search, color: Colors.white),
                 ),
               ],
             ),
@@ -169,7 +214,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                readableAddress,
+                _isResolvingAddress ? "Resolving address..." : readableAddress,
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 14),
               ),
@@ -189,8 +234,17 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 ),
               ),
               onPressed: () {
+                final address = readableAddress.trim();
+                if (_isResolvingAddress ||
+                    address.isEmpty ||
+                    address == "Fetching address..." ||
+                    address == "Unable to resolve address right now") {
+                  _showMessage("Please wait for a valid address before confirming.");
+                  return;
+                }
+
                 Navigator.pop(context, {
-                  "address": readableAddress,
+                  "address": address,
                   "lat": selected.latitude,
                   "lng": selected.longitude,
                 });

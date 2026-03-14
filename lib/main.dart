@@ -26,6 +26,7 @@ import 'screens/app/settings/notifsetting_page.dart';
 import 'screens/register/map_picker.dart';
 
 import 'widgets/background_service_control.dart';
+import 'widgets/global_manual_alert_button.dart';
 
 import 'services/cnn_listener_service.dart';
 import 'services/background_cnn_service.dart';
@@ -34,7 +35,60 @@ import 'services/background_ai_manager.dart';
 import 'services/fcm_service.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+final ValueNotifier<String?> currentRouteName = ValueNotifier<String?>(null);
+final ValueNotifier<bool> hasPopupRoute = ValueNotifier<bool>(false);
+final AppRouteObserver appRouteObserver = AppRouteObserver();
 late FirebaseApp yoloFirebaseApp;
+
+class AppRouteObserver extends NavigatorObserver {
+  final List<Route<dynamic>> _routes = <Route<dynamic>>[];
+
+  void _syncState() {
+    Route<dynamic>? topPageRoute;
+    for (final route in _routes.reversed) {
+      if (route is PageRoute<dynamic>) {
+        topPageRoute = route;
+        break;
+      }
+    }
+
+    currentRouteName.value = topPageRoute?.settings.name;
+    hasPopupRoute.value = _routes.isNotEmpty && _routes.last is PopupRoute<dynamic>;
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _routes.add(route);
+    _syncState();
+    super.didPush(route, previousRoute);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _routes.remove(route);
+    _syncState();
+    super.didPop(route, previousRoute);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _routes.remove(route);
+    _syncState();
+    super.didRemove(route, previousRoute);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (oldRoute != null) {
+      _routes.remove(oldRoute);
+    }
+    if (newRoute != null) {
+      _routes.add(newRoute);
+    }
+    _syncState();
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+  }
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -134,11 +188,20 @@ class MyApp extends StatelessWidget {
 
     return MaterialApp(
       navigatorKey: navigatorKey,
+      navigatorObservers: [appRouteObserver],
       debugShowCheckedModeBanner: false,
       title: "Apula",
       themeMode: themeProvider.themeMode,
       theme: lightTheme,
       darkTheme: darkTheme,
+      builder: (context, child) {
+        return Stack(
+          children: [
+            if (child != null) child,
+            const GlobalManualAlertButton(),
+          ],
+        );
+      },
       initialRoute: "/",
       routes: {
         '/': (_) => const SplashScreen(),

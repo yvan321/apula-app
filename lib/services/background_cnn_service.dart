@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:apula/utils/alert_source_attribution.dart';
 
 class BackgroundCnnService {
   static bool _running = false;
@@ -84,13 +85,41 @@ class BackgroundCnnService {
 
       _interpreter!.run(input, output);
 
+      final attribution = AlertSourceAttribution.fromSignals(
+        yoloConf: raw[0],
+        temperature: raw[1],
+        humidity: raw[2],
+        mq2: raw[3],
+        flame: raw[4],
+        thermalMax: raw[5],
+        thermalAvg: raw[6],
+        yoloFireConf: raw[7],
+        yoloSmokeConf: raw[8],
+        yoloNoFireConf: raw[9],
+      );
+
       // Write CNN results to camera-specific path
       final cnnOutRef = _rtdb.child("cnn_results/$cameraId");
       await cnnOutRef.set({
         "severity": output[0][0],
         "alert": output[0][1],
         "timestamp": ServerValue.timestamp,
-        "input": {"image_url": yolo["image_url"]},
+        "input": {
+          "image_url": yolo["image_url"],
+          "yolo_conf": raw[0],
+          "yolo_fire_conf": raw[7],
+          "yolo_smoke_conf": raw[8],
+          "yolo_no_fire_conf": raw[9],
+        },
+        "sensor": {
+          "DHT_Temp": raw[1],
+          "DHT_Humidity": raw[2],
+          "MQ2_Value": raw[3],
+          "Flame_Det": raw[4],
+          "thermal_max": raw[5],
+          "thermal_avg": raw[6],
+        },
+        "attribution": attribution,
       });
     });
   }

@@ -8,6 +8,7 @@ typedef CnnCallback = void Function(
   double alert,
   double severity,
   String snapshotUrl,
+  String dominantSource,
 );
 
 class CnnListenerService {
@@ -51,6 +52,8 @@ class CnnListenerService {
     final double alert = _toDouble(data["alert"]);
     final double severity = _toDouble(data["severity"]);
     final snapshotUrl = data["input"]?["image_url"]?.toString() ?? "";
+    final dominantSource =
+      data["attribution"]?["dominantSource"]?.toString() ?? "unknown";
 
     final now = DateTime.now();
 
@@ -71,7 +74,7 @@ class CnnListenerService {
     SchedulerBinding.instance.addPostFrameCallback((_) {
       final callbacks = _callbacks[cameraId] ?? [];
       for (final cb in callbacks) {
-        cb(cameraId, alert, severity, snapshotUrl);
+        cb(cameraId, alert, severity, snapshotUrl, dominantSource);
       }
     });
   }
