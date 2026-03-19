@@ -2,6 +2,8 @@
 
 // This safely exposes `platformViewRegistry` only on web.
 
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 typedef PlatformViewRegistryRegister = void Function(
@@ -11,8 +13,6 @@ typedef PlatformViewRegistryRegister = void Function(
 
 PlatformViewRegistryRegister? getPlatformViewRegistry() {
   if (kIsWeb) {
-    // ignore: avoid_web_libraries_in_flutter
-    import 'dart:ui' as ui;
     // ignore: undefined_prefixed_name
     return ui.platformViewRegistry.registerViewFactory;
   }

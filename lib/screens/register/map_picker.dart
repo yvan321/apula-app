@@ -1,8 +1,10 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:geolocator/geolocator.dart';
 
 class MapPickerScreen extends StatefulWidget {
   final String? initialAddress;
@@ -21,6 +23,8 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   String readableAddress = "Fetching address...";
   bool _isResolvingAddress = false;
   bool _isSearchingAddress = false;
+  bool _isLocating = false;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
@@ -125,6 +129,60 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
     );
   }
 
+  Future<void> _detectMyLocation() async {
+    if (mounted) setState(() => _isLocating = true);
+
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        _showMessage("Location services are disabled. Please enable GPS.");
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          _showMessage("Location permission denied.");
+          return;
+        }
+      }
+      if (permission == LocationPermission.deniedForever) {
+        _showMessage("Location permission permanently denied. Enable it in Settings.");
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      if (!mounted) return;
+
+      final loc = LatLng(position.latitude, position.longitude);
+      setState(() => selected = loc);
+      _mapController.move(loc, 17);
+      await _reverseGeocode(loc);
+    } catch (e) {
+      if (mounted) _showMessage("Could not detect location. Try again.");
+    } finally {
+      if (mounted) setState(() => _isLocating = false);
+    }
+  }
+
+  void _debouncedReverseGeocode(LatLng pos) {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 800), () {
+      _reverseGeocode(pos);
+    });
+  }
+
+  @override
+  void dispose() {
+    _debounceTimer?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -142,7 +200,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
               onPositionChanged: (MapCamera camera, bool hasGesture) {
                 if (hasGesture) {
                   selected = camera.center;
-                  _reverseGeocode(selected);
+                  _debouncedReverseGeocode(selected);
                 }
               },
             ),
@@ -198,6 +256,24 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                           ),
                         )
                       : const Icon(Icons.search, color: Colors.white),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _isLocating ? null : _detectMyLocation,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1565C0),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+                  ),
+                  child: _isLocating
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Icon(Icons.my_location, color: Colors.white),
                 ),
               ],
             ),

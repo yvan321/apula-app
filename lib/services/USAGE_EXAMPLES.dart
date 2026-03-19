@@ -1,8 +1,8 @@
 // USAGE EXAMPLES FOR BACKGROUND AI SERVICES
 
 import 'package:flutter/material.dart';
-import 'services/background_ai_manager.dart';
-import 'widgets/background_service_control.dart';
+import 'background_ai_manager.dart';
+import '../widgets/background_service_control.dart';
 
 /* ============================================
    OPTION 1: Using the UI Widget

@@ -1,12 +1,8 @@
-import 'package:flutter/material.dart';
-import 'package:lottie/lottie.dart';
-import '../register/setpassword_screen.dart';
 import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'dart:math';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:apula/utils/network_config.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 
 enum SnackBarType { success, error, info }
 
@@ -19,14 +15,8 @@ class VerificationScreen extends StatefulWidget {
 }
 
 class _VerificationScreenState extends State<VerificationScreen> {
-  final List<TextEditingController> _codeControllers = List.generate(
-    6,
-    (_) => TextEditingController(),
-  );
-  final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
-
   Timer? _timer;
-  int _secondsRemaining = 120;
+  int _secondsRemaining = 60;
 
   @override
   void initState() {
@@ -34,7 +24,6 @@ class _VerificationScreenState extends State<VerificationScreen> {
     _startTimer();
   }
 
-  // 🔔 Custom Snackbar
   void _showSnackBar(String message, SnackBarType type) {
     Color bgColor;
     IconData icon;
@@ -80,7 +69,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
 
   void _startTimer() {
     _timer?.cancel();
-    _secondsRemaining = 120;
+    _secondsRemaining = 60;
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_secondsRemaining == 0) {
         timer.cancel();
@@ -92,163 +81,61 @@ class _VerificationScreenState extends State<VerificationScreen> {
     });
   }
 
-  Future<void> _resendCode() async {
-    final newCode = (100000 + Random().nextInt(900000)).toString();
+  Future<void> _resendVerificationEmail() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        _showSnackBar("Session expired. Please register/login again.", SnackBarType.error);
+        return;
+      }
 
-    // 🔍 Find user by email
-    final query = await FirebaseFirestore.instance
-        .collection('users')
-        .where('email', isEqualTo: widget.email)
-        .limit(1)
-        .get();
-
-    if (query.docs.isEmpty) {
-      _showSnackBar("User not found.", SnackBarType.error);
-      return;
+      await user.sendEmailVerification();
+      _startTimer();
+      _showSnackBar("Verification email resent.", SnackBarType.info);
+    } on FirebaseAuthException catch (e) {
+      _showSnackBar(e.message ?? "Failed to resend verification email.", SnackBarType.error);
+    } catch (e) {
+      _showSnackBar("Failed to resend verification email: $e", SnackBarType.error);
     }
-
-    final userDoc = query.docs.first;
-
-    // Update code in Firestore
-    await FirebaseFirestore.instance.collection('users').doc(userDoc.id).update(
-      {'verificationCode': newCode},
-    );
-
-    // Send the new code via backend API
-    final baseUrl = await getBaseUrl();
-    final url = Uri.parse("$baseUrl/send-verification");
-
-    await http.post(
-      url,
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({"email": widget.email, "code": newCode}),
-    );
-
-    _startTimer();
-    _showSnackBar("A new verification code was sent.", SnackBarType.info);
   }
 
-  Future<void> _confirmCode() async {
-  final code = _codeControllers.map((c) => c.text).join().trim();
+  Future<void> _checkVerificationStatus() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        _showSnackBar("Session expired. Please register/login again.", SnackBarType.error);
+        return;
+      }
 
-  if (code.length != 6) {
-    _showSnackBar("Please enter the 6-digit code.", SnackBarType.error);
-    return;
-  }
+      await user.reload();
+      final refreshedUser = FirebaseAuth.instance.currentUser;
 
-  try {
-    final query = await FirebaseFirestore.instance
-        .collection('users')
-        .where('email', isEqualTo: widget.email)
-        .limit(1)
-        .get();
+      if (refreshedUser?.emailVerified == true) {
+        final query = await FirebaseFirestore.instance
+            .collection('users')
+            .where('email', isEqualTo: widget.email)
+            .limit(1)
+            .get();
 
-    if (query.docs.isEmpty) {
-      _showSnackBar("User not found.", SnackBarType.error);
-      return;
+        if (query.docs.isNotEmpty) {
+          await query.docs.first.reference.update({'verified': true});
+        }
+
+        _showSnackBar("Email verified. You can now login.", SnackBarType.success);
+        if (!mounted) return;
+        Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
+      } else {
+        _showSnackBar("Email not verified yet. Open the link in your inbox first.", SnackBarType.info);
+      }
+    } catch (e) {
+      _showSnackBar("Error checking verification status: $e", SnackBarType.error);
     }
-
-    final userDoc = query.docs.first;
-
-    // 🔥 Convert both to String to avoid int vs string mismatch
-    final storedCode =
-        userDoc.data()['verificationCode']?.toString().trim() ?? "";
-    final entered = code.trim();
-
-    if (storedCode == entered) {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userDoc.id)
-          .update({'verified': true});
-
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) {
-          Future.delayed(const Duration(seconds: 2), () {
-            Navigator.pop(context);
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (_) => SetPasswordScreen(email: widget.email),
-              ),
-            );
-          });
-
-          return AlertDialog(
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20)),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Lottie.asset('assets/check orange.json',
-                    repeat: false, height: 200),
-                const SizedBox(height: 20),
-                const Text(
-                  "Verification successful!",
-                  style: TextStyle(
-                    color: Color(0xFFA30000),
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      );
-    } else {
-      _showSnackBar("Invalid code. Please try again.", SnackBarType.error);
-    }
-  } catch (e) {
-    _showSnackBar("Error verifying code: $e", SnackBarType.error);
   }
-}
-
 
   @override
   void dispose() {
     _timer?.cancel();
-    for (var c in _codeControllers) {
-      c.dispose();
-    }
-    for (var f in _focusNodes) {
-      f.dispose();
-    }
     super.dispose();
-  }
-
-  Widget _buildCodeField(int index) {
-    return SizedBox(
-      width: 50,
-      child: TextField(
-        controller: _codeControllers[index],
-        focusNode: _focusNodes[index],
-        textAlign: TextAlign.center,
-        keyboardType: TextInputType.number,
-        maxLength: 1,
-        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-        decoration: InputDecoration(
-          counterText: "",
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFFA30000), width: 2),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFFA30000), width: 2),
-          ),
-        ),
-        onChanged: (value) {
-          if (value.isNotEmpty && index < 5) {
-            FocusScope.of(context).requestFocus(_focusNodes[index + 1]);
-          } else if (value.isEmpty && index > 0) {
-            FocusScope.of(context).requestFocus(_focusNodes[index - 1]);
-          }
-        },
-      ),
-    );
   }
 
   @override
@@ -273,9 +160,9 @@ class _VerificationScreenState extends State<VerificationScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 40),
+                      padding: const EdgeInsets.only(bottom: 30),
                       child: Text(
-                        "Enter Verification Code",
+                        "Verify Your Email",
                         style: TextStyle(
                           fontSize: 30,
                           fontWeight: FontWeight.bold,
@@ -287,7 +174,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
                       text: TextSpan(
                         style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                         children: [
-                          const TextSpan(text: "We’ve sent a 6-digit code to "),
+                          const TextSpan(text: "We've sent a verification link to "),
                           TextSpan(
                             text: widget.email,
                             style: const TextStyle(
@@ -295,37 +182,24 @@ class _VerificationScreenState extends State<VerificationScreen> {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const TextSpan(text: "."),
+                          const TextSpan(text: ". Open the link, then come back and tap the button below."),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 40),
-
-                    // OTP FIELDS 🔢
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: List.generate(
-                        6,
-                        (index) => _buildCodeField(index),
-                      ),
-                    ),
-
                     const Spacer(),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primary,
+                          backgroundColor: Theme.of(context).colorScheme.primary,
                           padding: const EdgeInsets.symmetric(vertical: 15),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
-                        onPressed: _confirmCode,
+                        onPressed: _checkVerificationStatus,
                         child: const Text(
-                          "Verify",
+                          "I've Verified My Email",
                           style: TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
@@ -345,15 +219,25 @@ class _VerificationScreenState extends State<VerificationScreen> {
                               ),
                             )
                           : TextButton(
-                              onPressed: _resendCode,
+                              onPressed: _resendVerificationEmail,
                               child: const Text(
-                                "Resend Code",
+                                "Resend Verification Email",
                                 style: TextStyle(
                                   color: Color(0xFFA30000),
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
+                    ),
+                    const SizedBox(height: 10),
+                    Center(
+                      child: TextButton(
+                        onPressed: () => Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false),
+                        child: const Text(
+                          "Back to Login",
+                          style: TextStyle(color: Color(0xFFA30000)),
+                        ),
+                      ),
                     ),
                   ],
                 ),

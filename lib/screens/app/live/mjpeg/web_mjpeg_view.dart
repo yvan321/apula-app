@@ -1,5 +1,7 @@
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
@@ -14,7 +16,7 @@ class MJpegView extends StatelessWidget {
 
     // Register view for Web
     // ignore: undefined_prefixed_name
-    platformViewRegistry.registerViewFactory(viewId, (int _) {
+    ui.platformViewRegistry.registerViewFactory(viewId, (int _) {
       final img = html.ImageElement()
         ..src = url
         ..style.width = '100%'

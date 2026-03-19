@@ -33,6 +33,7 @@ import 'services/background_cnn_service.dart';
 import 'services/global_alert_handler.dart';
 import 'services/background_ai_manager.dart';
 import 'services/fcm_service.dart';
+import 'utils/app_palette.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 final ValueNotifier<String?> currentRouteName = ValueNotifier<String?>(null);
@@ -111,10 +112,8 @@ void main() async {
   await BackgroundAIManager.initWorkManager();
   BackgroundAIManager.initForegroundTask();
 
-  // Auto-start both continuous and periodic monitoring
-  await Future.delayed(const Duration(seconds: 1));
-  await BackgroundAIManager.startForegroundService();
-  await BackgroundAIManager.startPeriodicTask();
+  // Do not auto-start monitoring here. Start/stop is user-controlled
+  // from the in-app background service controls after login.
 
   // Initialize FCM for push notifications
   await FcmService.initialize();
@@ -133,28 +132,72 @@ void main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  TextTheme _buildAccessibleTextTheme(TextTheme base) {
+    return base.copyWith(
+      headlineLarge: base.headlineLarge?.copyWith(fontSize: 34, fontWeight: FontWeight.w700),
+      headlineMedium: base.headlineMedium?.copyWith(fontSize: 30, fontWeight: FontWeight.w700),
+      headlineSmall: base.headlineSmall?.copyWith(fontSize: 26, fontWeight: FontWeight.w600),
+      titleLarge: base.titleLarge?.copyWith(fontSize: 24, fontWeight: FontWeight.w600),
+      titleMedium: base.titleMedium?.copyWith(fontSize: 20, fontWeight: FontWeight.w600),
+      bodyLarge: base.bodyLarge?.copyWith(fontSize: 18, height: 1.4),
+      bodyMedium: base.bodyMedium?.copyWith(fontSize: 16, height: 1.4),
+      bodySmall: base.bodySmall?.copyWith(fontSize: 14, height: 1.35),
+      labelLarge: base.labelLarge?.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
+      labelMedium: base.labelMedium?.copyWith(fontSize: 14),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    const primaryRed = Color(0xFFA30000);
     final themeProvider = Provider.of<ThemeProvider>(context);
 
     // Light theme
+    final lightScheme = ColorScheme.fromSeed(
+      seedColor: AppPalette.primaryFire,
+      brightness: Brightness.light,
+    ).copyWith(
+      primary: AppPalette.primaryFire,
+      secondary: AppPalette.secondaryWarm,
+      tertiary: AppPalette.actionTeal,
+      error: AppPalette.emergencyRed,
+      surface: AppPalette.lightCard,
+    );
+
     final lightTheme = ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: primaryRed,
-        brightness: Brightness.light,
-      ),
+      colorScheme: lightScheme,
+      textTheme: _buildAccessibleTextTheme(ThemeData(brightness: Brightness.light).textTheme),
       appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFFF5F5F5),
+        backgroundColor: AppPalette.lightCard,
         foregroundColor: Colors.black87,
         elevation: 0,
       ),
-      scaffoldBackgroundColor: Colors.white,
+      scaffoldBackgroundColor: AppPalette.lightBackground,
+      cardColor: AppPalette.lightCard,
+      snackBarTheme: const SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppPalette.actionTeal,
+          foregroundColor: Colors.white,
+          minimumSize: const Size.fromHeight(52),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: AppPalette.actionTeal,
+          foregroundColor: Colors.white,
+          minimumSize: const Size.fromHeight(52),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+      ),
       inputDecorationTheme: InputDecorationTheme(
         fillColor: const Color(0xFFF0F0F0),
         filled: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -163,22 +206,52 @@ class MyApp extends StatelessWidget {
     );
 
     // Dark theme
+    final darkScheme = ColorScheme.fromSeed(
+      seedColor: AppPalette.primaryFire,
+      brightness: Brightness.dark,
+    ).copyWith(
+      primary: AppPalette.secondaryWarm,
+      secondary: AppPalette.primaryFire,
+      tertiary: AppPalette.actionTeal,
+      error: AppPalette.emergencyRed,
+      surface: AppPalette.darkCard,
+    );
+
     final darkTheme = ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: primaryRed,
-        brightness: Brightness.dark,
-      ),
+      colorScheme: darkScheme,
+      textTheme: _buildAccessibleTextTheme(ThemeData(brightness: Brightness.dark).textTheme),
       appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFF1A1A1A),
+        backgroundColor: AppPalette.darkCard,
         foregroundColor: Colors.white,
         elevation: 0,
       ),
-      scaffoldBackgroundColor: const Color(0xFF121212),
+      scaffoldBackgroundColor: AppPalette.darkBackground,
+      cardColor: AppPalette.darkCard,
+      snackBarTheme: const SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppPalette.actionTeal,
+          foregroundColor: Colors.white,
+          minimumSize: const Size.fromHeight(52),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: AppPalette.actionTeal,
+          foregroundColor: Colors.white,
+          minimumSize: const Size.fromHeight(52),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+      ),
       inputDecorationTheme: InputDecorationTheme(
         fillColor: const Color(0xFF2A2A2A),
         filled: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -195,11 +268,17 @@ class MyApp extends StatelessWidget {
       theme: lightTheme,
       darkTheme: darkTheme,
       builder: (context, child) {
-        return Stack(
-          children: [
-            if (child != null) child,
-            const GlobalManualAlertButton(),
-          ],
+        return ValueListenableBuilder<String?>(
+          valueListenable: currentRouteName,
+          builder: (context, routeName, _) {
+            final isDashboard = routeName == '/home';
+            return Stack(
+              children: [
+                if (child != null) child,
+                if (isDashboard) const GlobalManualAlertButton(),
+              ],
+            );
+          },
         );
       },
       initialRoute: "/",

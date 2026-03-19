@@ -1,13 +1,9 @@
-import 'dart:math';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:latlong2/latlong.dart';
 import 'package:apula/screens/register/map_picker.dart';
 import 'package:apula/screens/register/verification_screen.dart';
-import 'package:apula/utils/network_config.dart';
 
 
 class RegisterScreen extends StatefulWidget {
@@ -22,6 +18,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _contactController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPasswordController = TextEditingController();
 
   double? selectedLat;
   double? selectedLng;
@@ -32,6 +30,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _contactController.dispose();
     _addressController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -51,6 +51,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final email = _emailController.text.trim().toLowerCase();
     final contact = _contactController.text.trim();
     final address = _addressController.text.trim();
+    final password = _passwordController.text.trim();
+    final confirmPassword = _confirmPasswordController.text.trim();
 
     if (email.contains("admin")) {
       _showSnackBar("Admin accounts cannot register in the app.", Colors.red);
@@ -61,9 +63,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
         email.isEmpty ||
         contact.isEmpty ||
         address.isEmpty ||
+        password.isEmpty ||
+        confirmPassword.isEmpty ||
         selectedLat == null ||
         selectedLng == null) {
       _showSnackBar("All fields must be filled.", Colors.red);
+      return;
+    }
+
+    if (password != confirmPassword) {
+      _showSnackBar("Passwords do not match.", Colors.red);
+      return;
+    }
+
+    if (password.length < 6) {
+      _showSnackBar("Password must be at least 6 characters.", Colors.red);
       return;
     }
 
@@ -73,40 +87,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     try {
-      // Create verification code
-      final code = (100000 + Random().nextInt(900000)).toString();
+      final userCredential = await FirebaseAuth.instance
+          .createUserWithEmailAndPassword(email: email, password: password);
 
-      print('🔢 Generated verification code: $code');
-      print('📧 Attempting to register: $email');
-
-      // Send email to backend FIRST
-      final baseUrl = await getBaseUrl();
-      final url = Uri.parse("$baseUrl/send-verification");
-      
-      print('📧 Sending verification email to: $email');
-      print('🔗 URL: $url');
-      print('📦 Payload: ${jsonEncode({"email": email, "code": code})}');
-      
-      final response = await http.post(
-        url,
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"email": email, "code": code}),
-      ).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          throw Exception('Connection timeout. Check if backend is running.');
-        },
-      );
-
-      print('📬 Response status: ${response.statusCode}');
-      print('📬 Response body: ${response.body}');
-
-      if (response.statusCode != 200) {
-        throw Exception('Failed to send email: ${response.body}');
+      final user = userCredential.user;
+      if (user == null) {
+        throw Exception('Account creation failed. Please try again.');
       }
 
-      // Only save to Firestore AFTER email sent successfully
-      final newUser = await FirebaseFirestore.instance.collection('users').add({
+      await user.sendEmailVerification();
+
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        "uid": user.uid,
         "name": name,
         "email": email,
         "contact": contact,
@@ -115,12 +107,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         "longitude": selectedLng,
         "role": "user",
         "platform": "mobile",
-        "verificationCode": code,
         "verified": false,
         "createdAt": FieldValue.serverTimestamp(),
-      });
-
-      print('✅ User saved to Firestore with ID: ${newUser.id}');
+      }, SetOptions(merge: true));
 
       // Success popup → go to verification
 showDialog(
@@ -149,7 +138,7 @@ showDialog(
           ),
           const SizedBox(height: 20),
           const Text(
-            "Check your email for the verification code!",
+            "Check your email and verify your account.",
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 18,
@@ -163,6 +152,16 @@ showDialog(
   },
 );
 
+    } on FirebaseAuthException catch (e) {
+      String message = e.message ?? 'Registration failed.';
+      if (e.code == 'email-already-in-use') {
+        message = 'This email is already registered.';
+      } else if (e.code == 'weak-password') {
+        message = 'Password is too weak. Use at least 6 characters.';
+      } else if (e.code == 'invalid-email') {
+        message = 'Please enter a valid email address.';
+      }
+      _showSnackBar(message, Colors.red);
     } catch (e) {
       print('❌ Registration error: $e');
       _showSnackBar("Error: $e", Colors.red);
@@ -245,6 +244,24 @@ showDialog(
                           selectedLng = result["lng"];
                         }
                       },
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // Password
+                    TextField(
+                      controller: _passwordController,
+                      obscureText: true,
+                      decoration: _input("Password"),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // Confirm Password
+                    TextField(
+                      controller: _confirmPasswordController,
+                      obscureText: true,
+                      decoration: _input("Confirm Password"),
                     ),
 
                     const SizedBox(height: 30),

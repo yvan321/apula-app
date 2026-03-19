@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:workmanager/workmanager.dart';
@@ -27,14 +29,6 @@ void callbackDispatcher() {
       const AndroidInitializationSettings androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
       await notifications.initialize(InitializationSettings(android: androidInit));
       
-      // Show start notification
-      await _showNotification(
-        notifications,
-        'APULA Background Task',
-        'Running AI analysis...',
-        channelId: 'background_task',
-      );
-      
       // Run AI inference
       final result = await _runBackgroundAI();
       
@@ -49,6 +43,7 @@ void callbackDispatcher() {
           'Camera: ${result['cameraId']} | Severity: ${result['fireProb']}%',
           channelId: 'background_alert',
           importance: importance,
+          notificationId: 42000 + ((result['cameraId']?.hashCode ?? 0).abs() % 1000),
         );
         print('📲 Notification sent for: ${result['label']}');
       } else {
@@ -65,6 +60,44 @@ void callbackDispatcher() {
 }
 
 Future<Map<String, String>?> _runBackgroundAI() async {
+  Future<List<String>> getLinkedCameraIds() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const [];
+
+    final byUid = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    if (byUid.exists) {
+      final data = byUid.data() ?? <String, dynamic>{};
+      final cameraIds = data['cameraIds'];
+      if (cameraIds is List) {
+        return cameraIds.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+      }
+    }
+
+    final byEmail = await FirebaseFirestore.instance
+        .collection('users')
+        .where('email', isEqualTo: user.email)
+        .limit(1)
+        .get();
+
+    if (byEmail.docs.isEmpty) return const [];
+
+    final data = byEmail.docs.first.data();
+    final cameraIds = data['cameraIds'];
+    if (cameraIds is! List) return const [];
+
+    return cameraIds.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+  }
+
+  final linkedCameraIds = await getLinkedCameraIds();
+  if (linkedCameraIds.isEmpty) {
+    print("⚠️ No linked cameras for this account. Skipping background inference.");
+    return null;
+  }
+
   // Load TFLite model - use quantized model like background_cnn_service
   final interpreter = await Interpreter.fromAsset(
     "assets/ml/cnn_model_quant.tflite",
@@ -94,6 +127,12 @@ Future<Map<String, String>?> _runBackgroundAI() async {
 
   // Extract camera_id from YOLO data
   final String cameraId = yoloData["camera_id"]?.toString() ?? "cam_01";
+
+  if (!linkedCameraIds.contains(cameraId)) {
+    print("⚠️ Latest camera '$cameraId' is not linked to this account. Skipping.");
+    interpreter.close();
+    return null;
+  }
 
   // Camera-scoped sensor path: sensor_data/{cameraId}/latest
   // Keep legacy fallback for backward compatibility.
@@ -153,10 +192,16 @@ Future<Map<String, String>?> _runBackgroundAI() async {
   final severity = output[0][0];
   final alert = output[0][1];
 
-  // Match GlobalAlertHandler thresholds
-  final bool cautionNow = severity >= 0.40 && alert >= 0.73;
-  final bool ignitionNow = severity >= 0.55 && alert >= 0.75;
-  final bool dangerousNow = severity >= 0.70 && alert >= 0.80;
+    // Match GlobalAlertHandler thresholds
+    final bool cautionNow =
+      (severity >= 0.40 && alert >= 0.60) ||
+      (severity >= 0.55 && alert >= 0.45);
+    final bool ignitionNow =
+      (severity >= 0.60 && alert >= 0.55) ||
+      (severity >= 0.70 && alert >= 0.40);
+    final bool dangerousNow =
+      (severity >= 0.70 && alert >= 0.40) ||
+      (severity >= 0.95 && alert >= 0.55);
 
   String label = "NO_FIRE";
   if (dangerousNow) {
@@ -215,6 +260,7 @@ Future<void> _showNotification(
   String body, {
   String channelId = 'apula_background',
   Importance importance = Importance.defaultImportance,
+  int? notificationId,
 }) async {
   final androidDetails = AndroidNotificationDetails(
     channelId,
@@ -226,7 +272,7 @@ Future<void> _showNotification(
   );
   
   await plugin.show(
-    DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    notificationId ?? (DateTime.now().millisecondsSinceEpoch ~/ 1000),
     title,
     body,
     NotificationDetails(android: androidDetails),

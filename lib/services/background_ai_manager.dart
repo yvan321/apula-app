@@ -1,11 +1,41 @@
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:workmanager/workmanager.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'background_ai_task.dart';
 import 'foreground_ai_service.dart';
 
 class BackgroundAIManager {
   static const String periodicTaskName = "periodicAITask";
   static const String foregroundTaskName = "foregroundAIService";
+
+  static Future<bool> hasLinkedCameras() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+
+    final byUid = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    if (byUid.exists) {
+      final data = byUid.data() ?? <String, dynamic>{};
+      final cameraIds = data['cameraIds'];
+      if (cameraIds is List && cameraIds.isNotEmpty) return true;
+    }
+
+    final byEmail = await FirebaseFirestore.instance
+        .collection('users')
+        .where('email', isEqualTo: user.email)
+        .limit(1)
+        .get();
+
+    if (byEmail.docs.isEmpty) return false;
+
+    final data = byEmail.docs.first.data();
+    final cameraIds = data['cameraIds'];
+    return cameraIds is List && cameraIds.isNotEmpty;
+  }
 
   /// Initialize WorkManager (call once at app startup)
   static Future<void> initWorkManager() async {
@@ -17,9 +47,14 @@ class BackgroundAIManager {
 
   /// Start periodic background task (every 15 minutes)
   /// Works even when app is closed
-  static Future<void> startPeriodicTask({
+  static Future<bool> startPeriodicTask({
     Duration frequency = const Duration(minutes: 15),
   }) async {
+    if (!await hasLinkedCameras()) {
+      print('⚠️ Skipping periodic AI task: no linked cameras for current user.');
+      return false;
+    }
+
     await Workmanager().registerPeriodicTask(
       periodicTaskName,
       periodicTaskName,
@@ -31,6 +66,7 @@ class BackgroundAIManager {
       backoffPolicyDelay: Duration(minutes: 5),
     );
     print('✅ Periodic AI task registered (every ${frequency.inMinutes} min)');
+    return true;
   }
 
   /// Stop periodic background task
@@ -64,6 +100,11 @@ class BackgroundAIManager {
   /// Start foreground service (continuous monitoring)
   /// Shows persistent notification, runs continuously
   static Future<bool> startForegroundService() async {
+    if (!await hasLinkedCameras()) {
+      print('⚠️ Skipping foreground AI service: no linked cameras for current user.');
+      return false;
+    }
+
     if (await FlutterForegroundTask.isRunningService) {
       return true;
     }

@@ -4,7 +4,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 
 /// 🌐 PRODUCTION URL - Deploy your backend to Railway/Render/Heroku and update this
 /// Example: "https://apula-backend.railway.app"
-const String PRODUCTION_URL = "https://your-backend-url.com";
+const String PRODUCTION_URL = "https://apula-app-production.up.railway.app";
 
 /// 🏠 LOCAL IP - Your computer's IP for local development
 const String LOCAL_IP = "192.168.1.4";

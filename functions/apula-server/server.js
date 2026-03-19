@@ -3,6 +3,7 @@ import cors from "cors";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 dotenv.config();
 
@@ -11,12 +12,31 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+const resendApiKey = String(process.env.RESEND_API_KEY || "").trim();
+const resend = resendApiKey ? new Resend(resendApiKey) : null;
+const senderEmail = String(
+  process.env.EMAIL_FROM || process.env.EMAIL_USER || "",
+).trim();
+
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
+  port: Number(process.env.SMTP_PORT || 587),
+  secure: String(process.env.SMTP_SECURE || "false").toLowerCase() === "true",
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 15000,
+});
+
+app.get("/health", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "apula-server",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.post("/send-verification", async (req, res) => {
@@ -27,7 +47,7 @@ app.post("/send-verification", async (req, res) => {
   }
 
   const mailOptions = {
-    from: `"Apula" <${process.env.EMAIL_USER}>`,
+    from: `"Apula" <${senderEmail}>`,
     to: email,
     subject: "Your Apula Verification Code",
     html: `
@@ -42,7 +62,31 @@ app.post("/send-verification", async (req, res) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    if (resend && senderEmail) {
+      const resendResult = await Promise.race([
+        resend.emails.send({
+          from: `Apula <${senderEmail}>`,
+          to: [email],
+          subject: mailOptions.subject,
+          html: mailOptions.html,
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Resend email send timeout")), 15000),
+        ),
+      ]);
+
+      if (resendResult?.error) {
+        throw new Error(`Resend error: ${resendResult.error.message || "Unknown resend error"}`);
+      }
+    } else {
+      await Promise.race([
+        transporter.sendMail(mailOptions),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("SMTP email send timeout")), 15000),
+        ),
+      ]);
+    }
+
     console.log(`✅ Email sent to ${email}`);
     res.status(200).json({ message: "Verification email sent successfully" });
   } catch (error) {

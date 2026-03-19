@@ -89,8 +89,12 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
 
   Future<void> _checkServiceStatus() async {
     final isRunning = await BackgroundAIManager.isForegroundServiceRunning();
+    final hasCameras = await BackgroundAIManager.hasLinkedCameras();
     setState(() {
       _foregroundServiceRunning = isRunning;
+      if (!hasCameras) {
+        _periodicTaskEnabled = false;
+      }
     });
   }
 
@@ -193,7 +197,14 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                         if (_foregroundServiceRunning) {
                           await BackgroundAIManager.stopForegroundService();
                         } else {
-                          await BackgroundAIManager.startForegroundService();
+                          final started = await BackgroundAIManager.startForegroundService();
+                          if (!started && mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Connect at least one camera first before enabling monitoring.'),
+                              ),
+                            );
+                          }
                         }
                         await _checkServiceStatus();
                       },
@@ -248,15 +259,27 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('Periodic task stopped')),
                           );
+                          setState(() {
+                            _periodicTaskEnabled = false;
+                          });
                         } else {
-                          await BackgroundAIManager.startPeriodicTask();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Periodic task started')),
-                          );
+                          final started = await BackgroundAIManager.startPeriodicTask();
+                          if (started) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Periodic task started')),
+                            );
+                            setState(() {
+                              _periodicTaskEnabled = true;
+                            });
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Connect at least one camera first before enabling monitoring.')),
+                            );
+                            setState(() {
+                              _periodicTaskEnabled = false;
+                            });
+                          }
                         }
-                        setState(() {
-                          _periodicTaskEnabled = !_periodicTaskEnabled;
-                        });
                       },
                       icon: Icon(_periodicTaskEnabled ? Icons.stop : Icons.play_arrow),
                       label: Text(_periodicTaskEnabled ? 'Disable' : 'Enable'),

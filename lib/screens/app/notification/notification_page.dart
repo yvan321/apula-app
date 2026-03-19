@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:apula/utils/app_palette.dart';
 
 class NotificationPage extends StatefulWidget {
   final List<String> availableDevices;
@@ -21,7 +22,6 @@ class NotificationPage extends StatefulWidget {
 
 class _NotificationPageState extends State<NotificationPage> {
   String _filter = "All";
-  static const Color red = Color(0xFFA30000);
   bool _deepLinkHandled = false;
 
   @override
@@ -223,8 +223,8 @@ class _NotificationPageState extends State<NotificationPage> {
   // DETAILS POPUP (auto-mark as read)
   // ----------------------------------------------------------------------
   void _showDetails(String docId, Map<String, dynamic> data) async {
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final actionColor = isDarkMode ? Colors.white : red;
+    final colorScheme = Theme.of(context).colorScheme;
+    final actionColor = colorScheme.tertiary;
 
     // Mark as read when viewing
     if (!data["read"]) {
@@ -244,7 +244,7 @@ class _NotificationPageState extends State<NotificationPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         title: Text(
           data["deviceName"] ?? "Fire Alert",
-          style: const TextStyle(color: red),
+          style: TextStyle(color: colorScheme.error, fontSize: 20, fontWeight: FontWeight.w700),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -268,11 +268,14 @@ class _NotificationPageState extends State<NotificationPage> {
                 ),
               ),
             const SizedBox(height: 10),
-            Text("Severity: ${data["severity"] ?? 0}"),
-            Text("Alert Score: ${data["alert"] ?? 0}"),
-            Text("Likely Trigger: ${_sourceLabel((data["dominantSource"] ?? data["source"] ?? "unknown").toString())}"),
+            Text("Severity: ${data["severity"] ?? 0}", style: const TextStyle(fontSize: 16)),
+            Text("Alert Score: ${data["alert"] ?? 0}", style: const TextStyle(fontSize: 16)),
+            Text(
+              "Likely Trigger: ${_sourceLabel((data["dominantSource"] ?? data["source"] ?? "unknown").toString())}",
+              style: const TextStyle(fontSize: 16),
+            ),
             const SizedBox(height: 10),
-            const Text("Tap CLOSE to return."),
+            const Text("Tap CLOSE to return.", style: TextStyle(fontSize: 15)),
           ],
         ),
         actions: [
@@ -309,7 +312,7 @@ class _NotificationPageState extends State<NotificationPage> {
             ListTile(
               leading: Icon(
                 data["read"] ? Icons.mark_email_unread : Icons.mark_email_read,
-                color: red,
+                color: AppPalette.secondaryWarm,
               ),
               title: Text(
                 data["read"] ? "Mark as Unread" : "Mark as Read",
@@ -380,6 +383,16 @@ class _NotificationPageState extends State<NotificationPage> {
   // ----------------------------------------------------------------------
   Widget _notifTile(String id, Map<String, dynamic> data) {
     final bool unread = data["read"] == false;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardBackground = unread
+      ? AppPalette.secondaryWarm.withOpacity(isDark ? 0.18 : 0.14)
+      : (isDark ? AppPalette.darkCard : AppPalette.lightCard);
+    final borderColor = unread
+      ? AppPalette.secondaryWarm
+      : (isDark ? Colors.white24 : Colors.black12);
+    final iconTileBg = isDark ? const Color(0xFF2B2B2B) : Colors.white;
+    final primaryTextColor = isDark ? Colors.white : Colors.black87;
+    final secondaryTextColor = isDark ? Colors.white70 : Colors.black54;
 
     return Dismissible(
       key: Key(id),
@@ -422,9 +435,9 @@ class _NotificationPageState extends State<NotificationPage> {
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: unread ? red.withOpacity(0.10) : Colors.grey.shade900,
+            color: cardBackground,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: unread ? red : Colors.grey.shade700),
+            border: Border.all(color: borderColor),
           ),
           child: Row(
             children: [
@@ -432,10 +445,14 @@ class _NotificationPageState extends State<NotificationPage> {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: iconTileBg,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.notifications, color: red, size: 28),
+                child: const Icon(
+                  Icons.local_fire_department,
+                  color: AppPalette.primaryFire,
+                  size: 28,
+                ),
               ),
               const SizedBox(width: 12),
 
@@ -447,17 +464,16 @@ class _NotificationPageState extends State<NotificationPage> {
                     Text(
                       data["deviceName"] ?? "Fire Alert",
                       style: TextStyle(
-                        fontSize: 16,
+                        fontSize: 18,
                         fontWeight:
                             unread ? FontWeight.bold : FontWeight.normal,
-                        color: Colors.white,
+                        color: primaryTextColor,
                       ),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       _formatTimestamp(data["timestamp"]),
-                      style:
-                          const TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(color: secondaryTextColor, fontSize: 14),
                     ),
                   ],
                 ),
@@ -468,7 +484,7 @@ class _NotificationPageState extends State<NotificationPage> {
                   width: 10,
                   height: 10,
                   decoration: const BoxDecoration(
-                      color: red, shape: BoxShape.circle),
+                      color: AppPalette.secondaryWarm, shape: BoxShape.circle),
                 ),
             ],
           ),
@@ -482,11 +498,12 @@ class _NotificationPageState extends State<NotificationPage> {
   // ----------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.black,
-        title: const Text("Alerts"),
+        title: const Text("Alerts", style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_sweep),
@@ -521,7 +538,7 @@ class _NotificationPageState extends State<NotificationPage> {
                   return const Center(
                     child: Text(
                       "Not logged in",
-                      style: TextStyle(color: Colors.white54),
+                      style: TextStyle(fontSize: 17),
                     ),
                   );
                 }
@@ -538,34 +555,37 @@ class _NotificationPageState extends State<NotificationPage> {
                       return Center(
                         child: Text(
                           "Error: ${snap.error}",
-                          style: const TextStyle(color: Colors.red),
+                          style: TextStyle(color: colorScheme.error, fontSize: 16),
                         ),
                       );
                     }
 
-                    if (!snap.hasData) {
-                      return const Center(
-                          child: CircularProgressIndicator(color: red));
+                    if (!snap.hasData || snap.data == null) {
+                      return Center(
+                        child: CircularProgressIndicator(color: colorScheme.secondary),
+                      );
                     }
 
                     // Filter by current user email in the app
                     final docs = snap.data!.docs
                         .where((d) {
-                          final data = Map<String, dynamic>.from(d.data() as Map);
+                          final raw = d.data();
+                          if (raw is! Map) return false;
+                          final data = Map<String, dynamic>.from(raw as Map);
                           final docEmail = data['userEmail'] ?? data['email'] ?? '';
                           return docEmail == userEmail;
                         })
                         .where((d) => _isIncidentAlert(
-                            Map<String, dynamic>.from(d.data() as Map)))
+                            Map<String, dynamic>.from((d.data() as Map))))
                         .where((d) => _matchesFilter(
-                            Map<String, dynamic>.from(d.data() as Map)))
+                            Map<String, dynamic>.from((d.data() as Map))))
                         .toList();
 
                     if (docs.isEmpty) {
                       return const Center(
                         child: Text(
                           "No alerts found",
-                          style: TextStyle(color: Colors.white54),
+                          style: TextStyle(fontSize: 17),
                         ),
                       );
                     }
@@ -595,15 +615,16 @@ class _NotificationPageState extends State<NotificationPage> {
   // ----------------------------------------------------------------------
   Widget _chip(String label) {
     final bool selected = _filter == label;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return FilterChip(
-      label: Text(label),
+      label: Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
       selected: selected,
       onSelected: (_) => setState(() => _filter = label),
-      selectedColor: red,
+      selectedColor: AppPalette.secondaryWarm,
       checkmarkColor: Colors.white,
-      backgroundColor: Colors.grey.shade800,
+      backgroundColor: isDark ? AppPalette.darkCard : AppPalette.lightCard,
       labelStyle: TextStyle(
-        color: selected ? Colors.white : Colors.white70,
+        color: selected ? Colors.white : null,
       ),
     );
   }

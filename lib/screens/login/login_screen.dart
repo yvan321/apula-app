@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:local_auth/local_auth.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 // ✅ Import your main and home screens
-import '../main_screen.dart';
-import '../register/add_device.dart';
 import '../app/home/home_page.dart';
 import '../../services/auth_service.dart';
 
@@ -20,7 +17,6 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final usernameController = TextEditingController();
   final passwordController = TextEditingController();
-  final LocalAuthentication auth = LocalAuthentication();
 
   void _showSnackBar(String message, Color bgColor) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -32,6 +28,66 @@ class _LoginScreenState extends State<LoginScreen> {
         backgroundColor: bgColor,
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _sendPasswordReset(String email) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.isEmpty) {
+      _showSnackBar("Enter your email first.", Colors.red);
+      return;
+    }
+
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: normalizedEmail);
+      if (!mounted) return;
+      _showSnackBar("Password reset email sent. Check inbox/spam.", Colors.green);
+    } on FirebaseAuthException catch (e) {
+      String message = e.message ?? "Failed to send reset email.";
+      if (e.code == 'user-not-found') {
+        message = "No account found with that email.";
+      } else if (e.code == 'invalid-email') {
+        message = "Please enter a valid email address.";
+      }
+      if (!mounted) return;
+      _showSnackBar(message, Colors.red);
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar("Failed to send reset email: $e", Colors.red);
+    }
+  }
+
+  void _openForgotPasswordDialog() {
+    final resetEmailController = TextEditingController(
+      text: usernameController.text.trim(),
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Forgot Password"),
+        content: TextField(
+          controller: resetEmailController,
+          keyboardType: TextInputType.emailAddress,
+          decoration: const InputDecoration(
+            labelText: "Enter your account email",
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () async {
+              final email = resetEmailController.text;
+              Navigator.pop(context);
+              await _sendPasswordReset(email);
+            },
+            child: const Text("Send Reset Link"),
+          ),
+        ],
       ),
     );
   }
@@ -49,8 +105,17 @@ Future<void> _login() async {
     }
 
     // Firebase authentication
-    UserCredential userCredential = await FirebaseAuth.instance
+    final userCredential = await FirebaseAuth.instance
         .signInWithEmailAndPassword(email: email, password: password);
+
+    await userCredential.user?.reload();
+    final isEmailVerified = FirebaseAuth.instance.currentUser?.emailVerified == true;
+
+    if (!isEmailVerified) {
+      await FirebaseAuth.instance.signOut();
+      _showSnackBar("Please verify your email first.", Colors.red);
+      return;
+    }
 
     // ✅ Fetch user data by email
     final query = await FirebaseFirestore.instance
@@ -78,11 +143,8 @@ Future<void> _login() async {
       return;
     }
 
-    // ✅ Check if verified before allowing login
     if (userData['verified'] != true) {
-      await FirebaseAuth.instance.signOut();
-      _showSnackBar("Please verify your account first.", Colors.red);
-      return;
+      await query.docs.first.reference.update({'verified': true});
     }
 
     // ✅ Save login session for persistent login
@@ -90,10 +152,7 @@ Future<void> _login() async {
 
     // ✅ Successful login
     _showSnackBar("Login successful", Colors.green);
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const HomePage()),
-    );
+    Navigator.pushReplacementNamed(context, '/home');
 
   } on FirebaseAuthException catch (e) {
     String errorMessage;
@@ -109,30 +168,6 @@ Future<void> _login() async {
     _showSnackBar("Something went wrong: $e", Colors.red);
   }
 }
-
-  // ✅ Fingerprint Authentication
-  Future<void> _authenticate() async {
-    bool authenticated = false;
-    try {
-      authenticated = await auth.authenticate(
-        localizedReason: 'Use your fingerprint to log in',
-        options: const AuthenticationOptions(biometricOnly: true),
-      );
-    } catch (e) {
-      _showSnackBar("Error: $e", Colors.red);
-      return;
-    }
-
-    if (authenticated) {
-      _showSnackBar("Fingerprint login successful", Colors.green);
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const MainScreen()),
-      );
-    } else {
-      _showSnackBar("Fingerprint login failed", Colors.red);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -206,6 +241,17 @@ Future<void> _login() async {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: _openForgotPasswordDialog,
+                        child: const Text(
+                          "Forgot Password?",
+                          style: TextStyle(color: Color(0xFFA30000)),
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 30),
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
@@ -223,96 +269,6 @@ Future<void> _login() async {
                           fontWeight: FontWeight.bold,
                           fontSize: 18,
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    TextButton(
-                      onPressed: () {
-                        showDialog(
-                          context: context,
-                          barrierDismissible: false,
-                          builder: (context) {
-                            final textTheme = Theme.of(context).textTheme;
-
-                            return Dialog(
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(20),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Icons.fingerprint,
-                                      size: 80,
-                                      color: Color(0xFFA30000),
-                                    ),
-                                    const SizedBox(height: 15),
-                                    Text(
-                                      "Fingerprint Authentication",
-                                      style: textTheme.titleLarge?.copyWith(
-                                        fontWeight: FontWeight.bold,
-                                        color: colorScheme.onSurface,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Text(
-                                      "Place your finger on the sensor to continue",
-                                      style: textTheme.bodyMedium?.copyWith(
-                                        color: colorScheme.onSurface
-                                            .withOpacity(0.7),
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    const SizedBox(height: 20),
-                                    ElevatedButton(
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor:
-                                            const Color(0xFFA30000),
-                                        minimumSize:
-                                            const Size(double.infinity, 45),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(10),
-                                        ),
-                                      ),
-                                      onPressed: () {
-                                        Navigator.pop(context);
-                                        _authenticate();
-                                      },
-                                      child: const Text(
-                                        "Authenticate",
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 10),
-                                    TextButton(
-                                      onPressed: () {
-                                        Navigator.pop(context);
-                                      },
-                                      child: Text(
-                                        "Cancel",
-                                        style: TextStyle(
-                                          color: colorScheme.onSurface
-                                              .withOpacity(0.6),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                      child: const Text(
-                        "Use Fingerprint",
-                        style: TextStyle(color: Color(0xFFA30000)),
                       ),
                     ),
                     const SizedBox(height: 10),

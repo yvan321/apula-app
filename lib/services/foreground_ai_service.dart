@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -121,8 +123,52 @@ class ForegroundAITaskHandler extends TaskHandler {
     );
   }
 
+  Future<List<String>> _getLinkedCameraIds() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const [];
+
+    final byUid = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    if (byUid.exists) {
+      final data = byUid.data() ?? <String, dynamic>{};
+      final cameraIds = data['cameraIds'];
+      if (cameraIds is List) {
+        return cameraIds.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+      }
+    }
+
+    final byEmail = await FirebaseFirestore.instance
+        .collection('users')
+        .where('email', isEqualTo: user.email)
+        .limit(1)
+        .get();
+
+    if (byEmail.docs.isEmpty) return const [];
+
+    final data = byEmail.docs.first.data();
+    final cameraIds = data['cameraIds'];
+    if (cameraIds is! List) return const [];
+
+    return cameraIds.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+  }
+
   Future<void> _runInference() async {
     try {
+      final linkedCameraIds = await _getLinkedCameraIds();
+      if (linkedCameraIds.isEmpty) {
+        _eventNotificationCounts.clear();
+        _lastNotificationTimeByCamera.clear();
+        _lastAlertTime = null;
+        FlutterForegroundTask.updateService(
+          notificationTitle: 'APULA AI Monitoring',
+          notificationText: 'No linked cameras for this account',
+        );
+        return;
+      }
+
       // Get camera_id from latest YOLO data
       final yoloSnap = await _yoloRef!.get();
       if (!yoloSnap.exists) {
@@ -135,6 +181,14 @@ class ForegroundAITaskHandler extends TaskHandler {
 
       final yoloData = yoloSnap.value as Map;
       final String cameraId = yoloData["camera_id"]?.toString() ?? "cam_01";
+
+      if (!linkedCameraIds.contains(cameraId)) {
+        FlutterForegroundTask.updateService(
+          notificationTitle: 'APULA AI Monitoring',
+          notificationText: 'Waiting for linked camera activity...',
+        );
+        return;
+      }
 
       // Get pre-computed CNN results instead of doing inference
       final cnnSnap = await _rtdb!.child("cnn_results/$cameraId").get();
@@ -151,10 +205,16 @@ class ForegroundAITaskHandler extends TaskHandler {
       final double alert = (cnnData["alert"] ?? 0.0).toDouble();
       final String snapshotUrl = (cnnData["input"]?["image_url"] ?? "") as String;
 
-      // Apply same thresholds as GlobalAlertHandler
-      final bool cautionNow = severity >= 0.40 && alert >= 0.73;
-      final bool ignitionNow = severity >= 0.55 && alert >= 0.75;
-      final bool dangerousNow = severity >= 0.70 && alert >= 0.80;
+        // Apply same thresholds as GlobalAlertHandler
+        final bool cautionNow =
+          (severity >= 0.40 && alert >= 0.60) ||
+          (severity >= 0.55 && alert >= 0.45);
+        final bool ignitionNow =
+          (severity >= 0.60 && alert >= 0.55) ||
+          (severity >= 0.70 && alert >= 0.40);
+        final bool dangerousNow =
+          (severity >= 0.70 && alert >= 0.40) ||
+          (severity >= 0.95 && alert >= 0.55);
 
       String label = "NO_FIRE";
       if (dangerousNow) {
@@ -228,7 +288,8 @@ class ForegroundAITaskHandler extends TaskHandler {
         return;
       }
 
-      final int notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      // Reuse per-camera notification IDs so alerts replace older ones instead of stacking.
+      final int notificationId = 51000 + (cameraId.hashCode.abs() % 1000);
       final AndroidNotificationDetails androidDetails =
           AndroidNotificationDetails(
         'apula_foreground_alerts',

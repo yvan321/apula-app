@@ -18,10 +18,10 @@ class GlobalAlertHandler {
 
   // Stability counters
   static int _dangerCounter = 0;
-  static int _ignitionCounter = 0;
+  static int _confirmationCounter = 0;
   static const int requiredStableCycles = 2;
 
-  // ✅ SINGLE DISPATCH GUARD (FIX)
+  // Single dispatch guard
   static bool _dispatcherAlertSent = false;
 
   static bool get hasActiveModal => modalOpenListenable.value;
@@ -50,24 +50,31 @@ class GlobalAlertHandler {
     String dominantSource = "unknown",
   }) async {
     print("🔥 FireModal | severity=$severity | alert=$alert");
+    print("📍 Route now: ${currentRouteName.value}");
 
     // ===================================================
-    // CNN DECISION LOGIC
+    // CLEAN ESCALATION LOGIC
     // ===================================================
+
+    // Low-level caution
     final bool cautionNow =
-        severity >= 0.40 && alert >= 0.73;
+        (severity >= 0.40 && alert >= 0.60) ||
+        (severity >= 0.55 && alert >= 0.45);
 
-    final bool ignitionNow =
-        severity >= 0.55 && alert >= 0.75;
+    // Confirmation-required escalation
+    // This includes your requested 0.70 / 0.40 condition
+    final bool confirmationNow =
+        (severity >= 0.70 && alert >= 0.40) ||
+        (severity >= 0.95 && alert >= 0.55);
 
+    // True dangerous auto-dispatch
     final bool dangerousNow =
-        severity >= 0.70 && alert >= 0.80;
+        (severity >= 0.90 && alert >= 0.70);
 
-    final bool strongSpike =
-      severity >= 0.90 && alert >= 0.90;
-
-    final bool urgentHighAlert =
-      severity >= 0.70 && alert >= 0.95;
+    // If only one signal spikes very high, force confirmation
+    final bool singleSignalHighSpike =
+        (severity >= 0.90 || alert >= 0.90) &&
+        !(severity >= 0.90 && alert >= 0.90);
 
     // ===================================================
     // STABILITY LOGIC
@@ -78,30 +85,35 @@ class GlobalAlertHandler {
       _dangerCounter = 0;
     }
 
-    if (ignitionNow) {
-      _ignitionCounter++;
+    if (confirmationNow) {
+      _confirmationCounter++;
     } else {
-      _ignitionCounter = 0;
+      _confirmationCounter = 0;
     }
 
-    final bool isDangerous =
-      urgentHighAlert || strongSpike || _dangerCounter >= requiredStableCycles;
+    final bool isDangerous = _dangerCounter >= requiredStableCycles;
 
-    final bool isIgnition =
-        _ignitionCounter >= requiredStableCycles && !isDangerous;
+    final bool isConfirmation =
+        (_confirmationCounter >= requiredStableCycles || singleSignalHighSpike) &&
+        !isDangerous;
 
     final bool isCaution =
-        cautionNow && !isDangerous && !isIgnition;
+        cautionNow && !isConfirmation && !isDangerous;
 
     print(
-      "Counters → danger=$_dangerCounter ignition=$_ignitionCounter "
-      "States → danger=$isDangerous ignition=$isIgnition caution=$isCaution"
+      "Counters → danger=$_dangerCounter confirmation=$_confirmationCounter "
+      "States → danger=$isDangerous confirmation=$isConfirmation caution=$isCaution "
+      "singleSignalHighSpike=$singleSignalHighSpike",
     );
+
+    print("Modal gates → hasActiveModal=$hasActiveModal");
+    print("Modal gates → lastModalType=$_lastModalType lastModalTime=$_lastModalTime");
+    print("Modal gates → cautionSnoozeUntil=$_cautionSnoozeUntil");
 
     // ===================================================
     // RESET INCIDENT WHEN NORMAL
     // ===================================================
-    if (!isDangerous && !isIgnition && !isCaution) {
+    if (!isDangerous && !isConfirmation && !isCaution) {
       if (_dispatcherAlertSent) {
         print("✅ Incident resolved, dispatcher lock reset");
       }
@@ -114,8 +126,8 @@ class GlobalAlertHandler {
     // ===================================================
     final String alertType = isDangerous
         ? "🔥 EXTREME FIRE DANGER"
-        : isIgnition
-            ? "🔥 IGNITION ANOMALY DETECTED"
+        : isConfirmation
+            ? "⚠️ CONFIRMATION REQUIRED: FIRE-LIKE ACTIVITY"
             : "⚠️ CAUTION: FIRE-LIKE ACTIVITY";
 
     // ===================================================
@@ -138,20 +150,22 @@ class GlobalAlertHandler {
     );
 
     // ===================================================
-    // 🔴 AUTOMATIC DISPATCHER ALERT (DANGEROUS ONLY)
+    // 🔴 DANGEROUS MODE, AUTO DISPATCH
     // ===================================================
-    if (isDangerous && !_dispatcherAlertSent) {
-      await _createDispatcherAlert(
-        userProfile,
-        snapshotUrl,
-        deviceName,
-        alertType,
-        dominantSource: dominantSource,
-      );
+    if (isDangerous) {
+      if (!_dispatcherAlertSent) {
+        await _createDispatcherAlert(
+          userProfile,
+          snapshotUrl,
+          deviceName,
+          alertType,
+          dominantSource: dominantSource,
+        );
+        _dispatcherAlertSent = true;
+      }
 
-      _dispatcherAlertSent = true;
       _dangerCounter = 0;
-      _ignitionCounter = 0;
+      _confirmationCounter = 0;
 
       if (_shouldShowModalFor("dangerous")) {
         _showHighModal(snapshotUrl, alertType, deviceName, dominantSource);
@@ -160,7 +174,38 @@ class GlobalAlertHandler {
     }
 
     // ===================================================
-    // 🟡 CAUTION MODE (USER CONFIRMATION)
+    // 🟡 SINGLE HIGH SPIKE, FORCE CONFIRMATION
+    // ===================================================
+    if (singleSignalHighSpike) {
+      print("⚠️ Single high spike detected, forcing confirmation modal");
+      if (!hasActiveModal && _shouldShowModalFor("confirmation")) {
+        _showMediumModal(
+          userProfile,
+          snapshotUrl,
+          deviceName,
+          "⚠️ CONFIRMATION REQUIRED: FIRE-LIKE ACTIVITY",
+          dominantSource,
+        );
+      }
+      return;
+    }
+
+    // ===================================================
+    // 🟠 CONFIRMATION MODE
+    // ===================================================
+    if (isConfirmation && _shouldShowModalFor("confirmation")) {
+      _showMediumModal(
+        userProfile,
+        snapshotUrl,
+        deviceName,
+        alertType,
+        dominantSource,
+      );
+      return;
+    }
+
+    // ===================================================
+    // 🟡 CAUTION MODE
     // ===================================================
     if (isCaution && _shouldShowModalFor("caution")) {
       _showMediumModal(
@@ -219,9 +264,10 @@ class GlobalAlertHandler {
     Map<String, dynamic>? user,
     String snapshotUrl,
     String deviceName,
-    String alertType,
-    {String? description, String dominantSource = "unknown"}
-  ) async {
+    String alertType, {
+    String? description,
+    String dominantSource = "unknown",
+  }) async {
     await FirebaseFirestore.instance.collection("alerts").add({
       "type": alertType,
       "location": deviceName,
@@ -249,20 +295,26 @@ class GlobalAlertHandler {
     if (hasActiveModal) {
       return false;
     }
+
     if (type == "dangerous") {
       return true;
     }
-    if (type == "caution" && _cautionSnoozeUntil != null) {
+
+    if ((type == "caution" || type == "confirmation") &&
+        _cautionSnoozeUntil != null) {
       if (DateTime.now().isBefore(_cautionSnoozeUntil!)) {
         return false;
       }
     }
+
     if (_lastModalTime == null || _lastModalType == null) {
       return true;
     }
+
     if (_lastModalType != type) {
       return true;
     }
+
     return DateTime.now().difference(_lastModalTime!) > modalCooldown;
   }
 
@@ -456,7 +508,10 @@ class GlobalAlertHandler {
     if (ctx == null) return;
     final thermalUrlFuture = _fetchThermalSnapshotUrl(deviceName);
 
-    _recordModalShown("caution");
+    final modalType =
+        alertType.contains("CONFIRMATION REQUIRED") ? "confirmation" : "caution";
+
+    _recordModalShown(modalType);
     _beginModal();
 
     const Duration inactivityTimeout = Duration(seconds: 15);
@@ -464,7 +519,7 @@ class GlobalAlertHandler {
     int remainingSeconds = inactivityTimeout.inSeconds;
     bool timerStarted = false;
     Timer? countdownTimer;
-    bool suppressForThirtyMinutes = false;
+    bool suppressForFiveMinutes = false;
     int snoozePreviewSeconds = cautionSnoozeDuration.inSeconds;
 
     void stopCountdown() {
@@ -477,7 +532,7 @@ class GlobalAlertHandler {
       resolved = true;
       stopCountdown();
 
-      if (suppressForThirtyMinutes && snoozePreviewSeconds > 0) {
+      if (suppressForFiveMinutes && snoozePreviewSeconds > 0) {
         _cautionSnoozeUntil =
             DateTime.now().add(Duration(seconds: snoozePreviewSeconds));
       }
@@ -527,7 +582,7 @@ class GlobalAlertHandler {
                   return;
                 }
                 remainingSeconds -= 1;
-                if (suppressForThirtyMinutes && snoozePreviewSeconds > 0) {
+                if (suppressForFiveMinutes && snoozePreviewSeconds > 0) {
                   snoozePreviewSeconds -= 1;
                 }
                 setState(() {});
@@ -559,17 +614,17 @@ class GlobalAlertHandler {
                   CheckboxListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text("Don't remind me again for 5 minutes"),
-                    value: suppressForThirtyMinutes,
+                    value: suppressForFiveMinutes,
                     onChanged: (value) {
-                      suppressForThirtyMinutes = value ?? false;
-                      if (!suppressForThirtyMinutes) {
+                      suppressForFiveMinutes = value ?? false;
+                      if (!suppressForFiveMinutes) {
                         snoozePreviewSeconds = cautionSnoozeDuration.inSeconds;
                       }
                       setState(() {});
                     },
                     controlAffinity: ListTileControlAffinity.leading,
                   ),
-                  if (suppressForThirtyMinutes)
+                  if (suppressForFiveMinutes)
                     Text(
                       "Snooze: ${_formatDuration(Duration(seconds: snoozePreviewSeconds))}",
                       style: const TextStyle(fontSize: 12),
@@ -585,7 +640,7 @@ class GlobalAlertHandler {
                 onPressed: () {
                   resolved = true;
                   stopCountdown();
-                  if (suppressForThirtyMinutes) {
+                  if (suppressForFiveMinutes) {
                     _cautionSnoozeUntil =
                         DateTime.now().add(Duration(seconds: snoozePreviewSeconds));
                   }
@@ -601,9 +656,9 @@ class GlobalAlertHandler {
                 onPressed: () async {
                   resolved = true;
                   stopCountdown();
-                  if (suppressForThirtyMinutes) {
+                  if (suppressForFiveMinutes) {
                     _cautionSnoozeUntil =
-                    DateTime.now().add(Duration(seconds: snoozePreviewSeconds));
+                        DateTime.now().add(Duration(seconds: snoozePreviewSeconds));
                   }
                   Navigator.pop(dialogCtx);
 
