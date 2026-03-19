@@ -58,7 +58,7 @@ class GlobalAlertHandler {
 
     // Low-level caution
     final bool cautionNow =
-        (severity >= 0.40 && alert >= 0.60) ||
+        (severity >= 0.46 && alert >= 0.60) ||
         (severity >= 0.55 && alert >= 0.45);
 
     // Confirmation-required escalation
