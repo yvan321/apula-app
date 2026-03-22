@@ -24,6 +24,9 @@ class GlobalAlertHandler {
   // Single dispatch guard
   static bool _dispatcherAlertSent = false;
 
+  // Track previous alert level for escalation detection
+  static String _lastAlertLevel = "none"; // "none", "caution", "confirmation", "dangerous"
+
   static bool get hasActiveModal => modalOpenListenable.value;
 
   static String _sourceLabel(String source) {
@@ -167,9 +170,13 @@ class GlobalAlertHandler {
       _dangerCounter = 0;
       _confirmationCounter = 0;
 
-      if (_shouldShowModalFor("dangerous")) {
+      // Detect escalation from caution to dangerous
+      final hasEscalated = _lastAlertLevel == "caution" || _lastAlertLevel == "confirmation";
+      if (_shouldShowModalFor("dangerous", isEscalated: hasEscalated)) {
         _showHighModal(snapshotUrl, alertType, deviceName, dominantSource);
       }
+      _lastAlertLevel = "dangerous";
+      _cautionSnoozeUntil = null; // Clear snooze on escalation
       return;
     }
 
@@ -187,20 +194,28 @@ class GlobalAlertHandler {
           dominantSource,
         );
       }
+      _lastAlertLevel = "confirmation";
+      _cautionSnoozeUntil = null;
       return;
     }
 
     // ===================================================
     // 🟠 CONFIRMATION MODE
     // ===================================================
-    if (isConfirmation && _shouldShowModalFor("confirmation")) {
-      _showMediumModal(
-        userProfile,
-        snapshotUrl,
-        deviceName,
-        alertType,
-        dominantSource,
-      );
+    if (isConfirmation) {
+      // Detect escalation from caution to confirmation
+      final hasEscalated = _lastAlertLevel == "caution";
+      if (_shouldShowModalFor("confirmation", isEscalated: hasEscalated)) {
+        _showMediumModal(
+          userProfile,
+          snapshotUrl,
+          deviceName,
+          alertType,
+          dominantSource,
+        );
+      }
+      _lastAlertLevel = "confirmation";
+      _cautionSnoozeUntil = null; // Clear snooze on escalation
       return;
     }
 
@@ -215,6 +230,9 @@ class GlobalAlertHandler {
         alertType,
         dominantSource,
       );
+      _lastAlertLevel = "caution";
+      // Set snooze only for caution level
+      _cautionSnoozeUntil = DateTime.now().add(cautionSnoozeDuration);
     }
   }
 
@@ -291,7 +309,7 @@ class GlobalAlertHandler {
   // =======================================================
   // MODAL HELPERS
   // =======================================================
-  static bool _shouldShowModalFor(String type) {
+  static bool _shouldShowModalFor(String type, {bool isEscalated = false}) {
     if (hasActiveModal) {
       return false;
     }
@@ -300,9 +318,16 @@ class GlobalAlertHandler {
       return true;
     }
 
+    // Bypass snooze if alert level has escalated (e.g., caution -> confirmation/dangerous)
+    if (isEscalated) {
+      print("⚡ Alert escalation detected - bypassing snooze");
+      return true;
+    }
+
     if ((type == "caution" || type == "confirmation") &&
         _cautionSnoozeUntil != null) {
       if (DateTime.now().isBefore(_cautionSnoozeUntil!)) {
+        print("⏳ Snooze active until $_cautionSnoozeUntil");
         return false;
       }
     }

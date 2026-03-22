@@ -277,14 +277,24 @@ exports.sendAlertNotificationOnCreate = functions.firestore
       const dominantSource = alert.dominantSource || alert.source || "unknown";
       const sourceLabel = formatDominantSource(dominantSource);
 
-      if (severity >= 0.70 && alertLevel >= 0.80) {
+      // Escalation detection: Check if this is a level jump (caution -> ignition/confirmation)
+      const lastAlertLevel = alert.lastAlertLevel || 0;
+      const hasEscalated = severity >= 0.60 && lastAlertLevel < 0.50;
+
+      // Match thresholds from global_alert_handler.dart
+      const isCaution = (severity >= 0.46 && alertLevel >= 0.60) || (severity >= 0.55 && alertLevel >= 0.45);
+      const isConfirmation = (severity >= 0.70 && alertLevel >= 0.40) || (severity >= 0.95 && alertLevel >= 0.55);
+      const isDangerous = (severity >= 0.90 && alertLevel >= 0.70);
+      const singleSignalHighSpike = (severity >= 0.90 || alertLevel >= 0.90) && !(severity >= 0.90 && alertLevel >= 0.90);
+
+      if (isDangerous) {
         title = "🔴 EXTREME FIRE DANGER";
         priority = "high";
-      } else if (severity >= 0.55 && alertLevel >= 0.75) {
-        title = "🟠 IGNITION ANOMALY DETECTED";
+      } else if (isConfirmation || singleSignalHighSpike) {
+        title = "⚠️ CONFIRMATION REQUIRED: FIRE-LIKE ACTIVITY";
         priority = "high";
-      } else if (severity >= 0.40 && alertLevel >= 0.73) {
-        title = "🟡 FIRE-LIKE ACTIVITY";
+      } else if (isCaution) {
+        title = "🟡 CAUTION: FIRE-LIKE ACTIVITY";
         priority = "normal";
       }
 
@@ -365,14 +375,22 @@ exports.sendAlertNotificationOnCreate = functions.firestore
             const now = Date.now();
             const lastEmailAt = userData.lastEmailAlertAt?.toDate?.();
             const cooldownMs = emailCooldownSeconds * 1000;
+            
+            // Bypass cooldown for escalated alerts (caution -> confirmation/dangerous)
+            const shouldBypassCooldown = hasEscalated || isDangerous;
 
-            if (lastEmailAt && now - lastEmailAt.getTime() < cooldownMs) {
+            if (lastEmailAt && now - lastEmailAt.getTime() < cooldownMs && !shouldBypassCooldown) {
               console.log(`⏳ Email cooldown active for ${userEmail}. Skipping email.`);
             } else {
+              if (shouldBypassCooldown && lastEmailAt && now - lastEmailAt.getTime() < cooldownMs) {
+                console.log(`⚡ Alert escalation detected - bypassing cooldown for ${userEmail}`);
+              }
+              
               const primaryRecipient = emailRecipients[0];
               const bccRecipients = emailRecipients.slice(1);
+              const escapationMsg = hasEscalated ? " [ESCALATED - Cooldown Bypassed]" : "";
               const emailContent = buildAlertEmailContent({
-                title,
+                title: title + escapationMsg,
                 device: alert.device || "Unknown",
                 severity,
                 alertLevel,
@@ -396,7 +414,7 @@ exports.sendAlertNotificationOnCreate = functions.firestore
                   });
 
                   console.log(
-                    `✅ Email alert sent to ${emailRecipients.length} recipient(s) for ${userEmail}`,
+                    `✅ Email alert sent to ${emailRecipients.length} recipient(s) for ${userEmail}${escapationMsg}`,
                   );
                 }).catch((err) => {
                   console.log(`❌ Email send error for ${userEmail}:`, err?.message || err);

@@ -86,6 +86,7 @@ class _HomePageState extends State<HomePage>
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
 
     _loadDevices();
+    _loadRecentActivitiesFromFirestore();
     _startDatabaseListeners();
   }
 
@@ -138,6 +139,62 @@ class _HomePageState extends State<HomePage>
     setState(() {
       sensorStatusPerCamera[cameraId] = status;
     });
+  }
+
+  Future<void> _loadRecentActivitiesFromFirestore() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final email = user.email;
+      if (email == null) return;
+
+      // Load last 10 alerts from Firestore
+      final snapshot = await FirebaseFirestore.instance
+          .collection('user_alerts')
+          .where('userEmail', isEqualTo: email)
+          .orderBy('timestamp', descending: true)
+          .limit(10)
+          .get();
+
+      if (!mounted) return;
+
+      setState(() {
+        recentActivities.clear();
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          final timestamp = data['timestamp'] as Timestamp?;
+          final timeAgo = timestamp != null
+              ? _formatTimeAgo(timestamp.toDate())
+              : 'Unknown time';
+
+          recentActivities.add({
+            'title': data['deviceName'] ?? data['device'] ?? 'Fire Alert',
+            'time': timeAgo,
+            'image': data['snapshotUrl'] ?? '',
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('Error loading recent activities: $e');
+    }
+  }
+
+  String _formatTimeAgo(DateTime timestamp) {
+    final now = DateTime.now();
+    final diff = now.difference(timestamp);
+
+    if (diff.inMinutes < 1) {
+      return 'Just now';
+    } else if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}m ago';
+    } else if (diff.inHours < 24) {
+      return '${diff.inHours}h ago';
+    } else if (diff.inDays < 7) {
+      return '${diff.inDays}d ago';
+    } else {
+      return '${(diff.inDays / 7).floor()}w ago';
+    }
   }
 
   void _updateTime() {
@@ -674,6 +731,7 @@ class _HomePageState extends State<HomePage>
     final isCloudy = condition == WeatherVisual.cloudy;
 
     return Container(
+      constraints: const BoxConstraints(minHeight: 200),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -740,33 +798,38 @@ class _HomePageState extends State<HomePage>
                 ),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Icon(
-                    _isDay
-                        ? (isCloudy
-                            ? Icons.wb_cloudy
-                            : (isRainy ? Icons.grain : Icons.wb_sunny))
-                        : (isRainy
-                            ? Icons.grain
-                            : Icons.nightlight_round),
-                    color: Colors.white,
-                    size: 30,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        _isDay
+                            ? (isCloudy
+                                ? Icons.wb_cloudy
+                                : (isRainy ? Icons.grain : Icons.wb_sunny))
+                            : (isRainy
+                                ? Icons.grain
+                                : Icons.nightlight_round),
+                        color: Colors.white,
+                        size: 30,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _time,
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _date,
+                        style: const TextStyle(fontSize: 14, color: Colors.white70),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _time,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _date,
-                    style: const TextStyle(fontSize: 14, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 4),
                   Text(
                     _weatherLabel(condition),
                     style: const TextStyle(
@@ -833,6 +896,7 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildTemperatureCard() {
     return Container(
+      constraints: const BoxConstraints(minHeight: 200),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -854,29 +918,77 @@ class _HomePageState extends State<HomePage>
           ),
         ],
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: _showCnnTestModal,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            const Icon(Icons.thermostat, color: Colors.white, size: 28),
-            const SizedBox(height: 8),
-            Text(
-              '$_roomTemp°C',
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            children: [
+              const Icon(Icons.thermostat, color: Colors.white, size: 28),
+              const SizedBox(height: 8),
+              Text(
+                '$_roomTemp°C',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Room Temp',
-              style: TextStyle(fontSize: 14, color: Colors.white70),
-            ),
-          ],
-        ),
+              const SizedBox(height: 4),
+              const Text(
+                'Room Temp',
+                style: TextStyle(fontSize: 14, color: Colors.white70),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Buttons row
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              ElevatedButton.icon(
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Increase'),
+                onPressed: () {
+                  setState(() {
+                    _roomTemp = (_roomTemp + 1).clamp(0, 50);
+                  });
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white24,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.remove, size: 16),
+                label: const Text('Decrease'),
+                onPressed: () {
+                  setState(() {
+                    _roomTemp = (_roomTemp - 1).clamp(0, 50);
+                  });
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white24,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.info, size: 16),
+                label: const Text('Details'),
+                onPressed: _showCnnTestModal,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white24,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

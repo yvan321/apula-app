@@ -546,6 +546,7 @@ class _NotificationPageState extends State<NotificationPage> {
                 return StreamBuilder<QuerySnapshot>(
                   stream: FirebaseFirestore.instance
                       .collection("user_alerts")
+                      .where("userEmail", isEqualTo: userEmail)
                       .orderBy("timestamp", descending: true)
                       .snapshots(),
                   builder: (context, snap) {
@@ -566,15 +567,8 @@ class _NotificationPageState extends State<NotificationPage> {
                       );
                     }
 
-                    // Filter by current user email in the app
+                    // Filter for incident alerts only
                     final docs = snap.data!.docs
-                        .where((d) {
-                          final raw = d.data();
-                          if (raw is! Map) return false;
-                          final data = Map<String, dynamic>.from(raw as Map);
-                          final docEmail = data['userEmail'] ?? data['email'] ?? '';
-                          return docEmail == userEmail;
-                        })
                         .where((d) => _isIncidentAlert(
                             Map<String, dynamic>.from((d.data() as Map))))
                         .where((d) => _matchesFilter(

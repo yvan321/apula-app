@@ -134,16 +134,16 @@ class MyApp extends StatelessWidget {
 
   TextTheme _buildAccessibleTextTheme(TextTheme base) {
     return base.copyWith(
-      headlineLarge: base.headlineLarge?.copyWith(fontSize: 34, fontWeight: FontWeight.w700),
-      headlineMedium: base.headlineMedium?.copyWith(fontSize: 30, fontWeight: FontWeight.w700),
-      headlineSmall: base.headlineSmall?.copyWith(fontSize: 26, fontWeight: FontWeight.w600),
-      titleLarge: base.titleLarge?.copyWith(fontSize: 24, fontWeight: FontWeight.w600),
-      titleMedium: base.titleMedium?.copyWith(fontSize: 20, fontWeight: FontWeight.w600),
-      bodyLarge: base.bodyLarge?.copyWith(fontSize: 18, height: 1.4),
-      bodyMedium: base.bodyMedium?.copyWith(fontSize: 16, height: 1.4),
-      bodySmall: base.bodySmall?.copyWith(fontSize: 14, height: 1.35),
-      labelLarge: base.labelLarge?.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
-      labelMedium: base.labelMedium?.copyWith(fontSize: 14),
+      headlineLarge: base.headlineLarge?.copyWith(fontSize: 40, fontWeight: FontWeight.w700),
+      headlineMedium: base.headlineMedium?.copyWith(fontSize: 36, fontWeight: FontWeight.w700),
+      headlineSmall: base.headlineSmall?.copyWith(fontSize: 32, fontWeight: FontWeight.w600),
+      titleLarge: base.titleLarge?.copyWith(fontSize: 28, fontWeight: FontWeight.w600),
+      titleMedium: base.titleMedium?.copyWith(fontSize: 24, fontWeight: FontWeight.w600),
+      bodyLarge: base.bodyLarge?.copyWith(fontSize: 20, height: 1.4),
+      bodyMedium: base.bodyMedium?.copyWith(fontSize: 18, height: 1.4),
+      bodySmall: base.bodySmall?.copyWith(fontSize: 16, height: 1.35),
+      labelLarge: base.labelLarge?.copyWith(fontSize: 18, fontWeight: FontWeight.w600),
+      labelMedium: base.labelMedium?.copyWith(fontSize: 16),
     );
   }
 

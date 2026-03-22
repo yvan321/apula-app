@@ -39,7 +39,7 @@ exports.sendAlertNotificationOnCreate = functions.firestore
       const fcmToken = userData.fcmToken;
 
       if (!fcmToken) {
-        console.log(`⚠️ No FCM token for user: ${userEmail}`);
+        console.log(`⚠️ No FCM token for user: ${userEmail}. This user won't receive push notifications until they log in to the app.`);
         return;
       }
 
@@ -50,18 +50,21 @@ exports.sendAlertNotificationOnCreate = functions.firestore
       const severity = alert.severity || 0;
       const alertLevel = alert.alert || 0;
 
-      if (severity >= 0.70 && alertLevel >= 0.80) {
+      if (severity >= 0.90 && alertLevel >= 0.70) {
         title = "🔴 EXTREME FIRE DANGER";
         priority = "high";
-      } else if (severity >= 0.55 && alertLevel >= 0.75) {
-        title = "🟠 IGNITION ANOMALY DETECTED";
+      } else if (severity >= 0.70) {
+        title = "🟠 CONFIRMATION REQUIRED";
         priority = "high";
-      } else if (severity >= 0.40 && alertLevel >= 0.73) {
-        title = "🟡 FIRE-LIKE ACTIVITY";
+      } else if (severity >= 0.46 && alertLevel >= 0.60) {
+        title = "🟡 CAUTION: FIRE-LIKE ACTIVITY";
         priority = "normal";
       }
 
+      console.log(`📨 Preparing to send ${priority} alert to ${userEmail} (token: ${fcmToken.substring(0, 20)}...)`);
+
       const message = {
+        token: fcmToken,
         notification: {
           title: title,
           body: `Camera: ${alert.device || "Unknown"} | Severity: ${(
@@ -77,6 +80,7 @@ exports.sendAlertNotificationOnCreate = functions.firestore
           severity: String(alert.severity),
           alert: String(alert.alert),
           snapshotUrl: alert.snapshotUrl || "",
+          alertId: snap.id || "",
           type: alert.type || "FIRE_ALERT",
           timestamp: new Date().toISOString(),
         },
@@ -91,11 +95,18 @@ exports.sendAlertNotificationOnCreate = functions.firestore
       };
 
       // Send notification
-      const response = await messaging.send(message);
-      console.log(`✅ Notification sent to ${userEmail}:`, message);
-      console.log(`📱 Message ID:`, response);
-
-      return response;
+      try {
+        const response = await messaging.send(message);
+        console.log(`✅ FCM notification sent successfully to ${userEmail}. Message ID: ${response}`);
+        return response;
+      } catch (error) {
+        console.error(`❌ Error sending FCM notification: ${error.message}`);
+        // Log more details about the error
+        if (error.code === "messaging/invalid-registration-token") {
+          console.error("⚠️ Invalid FCM token - user may need to reinstall app or re-login");
+        }
+        throw error;
+      }
     } catch (error) {
       console.error(`❌ Error sending notification to ${userEmail}:`, error);
       throw error;
