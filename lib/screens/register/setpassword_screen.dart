@@ -49,19 +49,36 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
       return;
     }
     
-    if (widget.email.toLowerCase().contains("admin")) {
-  _showSnackBar("Admins must create their account via the web dashboard.", Colors.red);
-  return;
-}
+    if (password.length < 6) {
+      _showSnackBar("Password must be at least 6 characters.", Colors.red);
+      return;
+    }
 
 
 
     try {
-      // 🔥 Create Firebase Auth account here
-      await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: widget.email,
-        password: password,
-      );
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        _showSnackBar(
+          "Session expired. Please verify email again before setting password.",
+          Colors.red,
+        );
+        return;
+      }
+
+      await user.reload();
+      final refreshed = FirebaseAuth.instance.currentUser;
+      if (refreshed == null || refreshed.email?.toLowerCase() != widget.email.toLowerCase()) {
+        _showSnackBar("Account mismatch. Please register again.", Colors.red);
+        return;
+      }
+
+      if (refreshed.emailVerified != true) {
+        _showSnackBar("Please verify your email first.", Colors.red);
+        return;
+      }
+
+      await refreshed.updatePassword(password);
 
       // 🕒 Show “Setting up account” animation
       showDialog(
@@ -78,7 +95,8 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
               builder: (context) {
                 Future.delayed(const Duration(seconds: 2), () {
                   Navigator.pop(context); // close success dialog
-                  Navigator.pushReplacementNamed(context, '/login');
+                  FirebaseAuth.instance.signOut();
+                  Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
                 });
 
                 return AlertDialog(

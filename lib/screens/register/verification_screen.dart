@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:apula/screens/register/setpassword_screen.dart';
 
 enum SnackBarType { success, error, info }
 
@@ -121,9 +122,14 @@ class _VerificationScreenState extends State<VerificationScreen> {
           await query.docs.first.reference.update({'verified': true});
         }
 
-        _showSnackBar("Email verified. You can now login.", SnackBarType.success);
+        _showSnackBar("Email verified. Set your password next.", SnackBarType.success);
         if (!mounted) return;
-        Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SetPasswordScreen(email: widget.email),
+          ),
+        );
       } else {
         _showSnackBar("Email not verified yet. Open the link in your inbox first.", SnackBarType.info);
       }

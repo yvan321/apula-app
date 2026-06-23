@@ -1,7 +1,5 @@
 import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:workmanager/workmanager.dart';
@@ -29,6 +27,14 @@ void callbackDispatcher() {
       const AndroidInitializationSettings androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
       await notifications.initialize(InitializationSettings(android: androidInit));
       
+      // Show start notification
+      await _showNotification(
+        notifications,
+        'APULA Background Task',
+        'Running AI analysis...',
+        channelId: 'background_task',
+      );
+      
       // Run AI inference
       final result = await _runBackgroundAI();
       
@@ -43,7 +49,6 @@ void callbackDispatcher() {
           'Camera: ${result['cameraId']} | Severity: ${result['fireProb']}%',
           channelId: 'background_alert',
           importance: importance,
-          notificationId: 42000 + ((result['cameraId']?.hashCode ?? 0).abs() % 1000),
         );
         print('📲 Notification sent for: ${result['label']}');
       } else {
@@ -60,44 +65,6 @@ void callbackDispatcher() {
 }
 
 Future<Map<String, String>?> _runBackgroundAI() async {
-  Future<List<String>> getLinkedCameraIds() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return const [];
-
-    final byUid = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-
-    if (byUid.exists) {
-      final data = byUid.data() ?? <String, dynamic>{};
-      final cameraIds = data['cameraIds'];
-      if (cameraIds is List) {
-        return cameraIds.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
-      }
-    }
-
-    final byEmail = await FirebaseFirestore.instance
-        .collection('users')
-        .where('email', isEqualTo: user.email)
-        .limit(1)
-        .get();
-
-    if (byEmail.docs.isEmpty) return const [];
-
-    final data = byEmail.docs.first.data();
-    final cameraIds = data['cameraIds'];
-    if (cameraIds is! List) return const [];
-
-    return cameraIds.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
-  }
-
-  final linkedCameraIds = await getLinkedCameraIds();
-  if (linkedCameraIds.isEmpty) {
-    print("⚠️ No linked cameras for this account. Skipping background inference.");
-    return null;
-  }
-
   // Load TFLite model - use quantized model like background_cnn_service
   final interpreter = await Interpreter.fromAsset(
     "assets/ml/cnn_model_quant.tflite",
@@ -114,7 +81,7 @@ Future<Map<String, String>?> _runBackgroundAI() async {
   // Get latest data from Firebase - USE YOLO APP
   final yoloApp = Firebase.app('yoloApp');
   final rtdb = FirebaseDatabase.instanceFor(app: yoloApp);
-  final yoloSnap = await rtdb.ref("cam_detections/latest").get();
+  final yoloSnap = await rtdb.ref("cam_detections").get();
   print("📡 Fetching data from yoloApp RTDB");
 
   if (!yoloSnap.exists) {
@@ -123,134 +90,180 @@ Future<Map<String, String>?> _runBackgroundAI() async {
     return null;
   }
 
-  final yoloData = yoloSnap.value as Map;
-
-  // Extract camera_id from YOLO data
-  final String cameraId = yoloData["camera_id"]?.toString() ?? "cam_01";
-
-  if (!linkedCameraIds.contains(cameraId)) {
-    print("⚠️ Latest camera '$cameraId' is not linked to this account. Skipping.");
+  final yoloEntries = _extractYoloEntries(yoloSnap.value);
+  if (yoloEntries.isEmpty) {
     interpreter.close();
     return null;
   }
 
-  // Camera-scoped sensor path: sensor_data/{cameraId}/latest
-  // Keep legacy fallback for backward compatibility.
-  DataSnapshot sensorSnap = await rtdb.ref("sensor_data/$cameraId/latest").get();
-  if (!sensorSnap.exists) {
-    sensorSnap = await rtdb.ref("sensor_data/latest").get();
-  }
+  Map<String, String>? topAlert;
+  double topScore = -1;
 
-  if (!sensorSnap.exists) {
-    print("⚠️ No sensor data available for $cameraId");
-    interpreter.close();
-    return null;
-  }
+  for (final entry in yoloEntries.entries) {
+    final cameraId = entry.key;
+    final yoloData = entry.value;
 
-  final sensorData = sensorSnap.value as Map;
+    // Camera-scoped sensor path: sensor_data/{cameraId}/latest
+    // Keep legacy fallback for backward compatibility.
+    DataSnapshot sensorSnap = await rtdb.ref("sensor_data/$cameraId/latest").get();
+    if (!sensorSnap.exists) {
+      sensorSnap = await rtdb.ref("sensor_data/latest").get();
+    }
 
-  // Build input features - matching background_cnn_service.dart field names
-  List<double> features = [
-    (yoloData["yolo_conf"] ?? 0.0).toDouble(),
-    (sensorData["DHT_Temp"] ?? 0.0).toDouble(),
-    (sensorData["DHT_Humidity"] ?? 0.0).toDouble(),
-    (sensorData["MQ2_Value"] ?? 0.0).toDouble(),
-    (sensorData["Flame_Det"] ?? 0.0).toDouble(),
-    (sensorData["thermal_max"] ?? 0.0).toDouble(),
-    (sensorData["thermal_avg"] ?? 0.0).toDouble(),
-    (yoloData["yolo_fire_conf"] ?? 0.0).toDouble(),
-    (yoloData["yolo_smoke_conf"] ?? 0.0).toDouble(),
-    (yoloData["yolo_no_fire_conf"] ?? 1.0).toDouble(),
-  ];
+    if (!sensorSnap.exists || sensorSnap.value is! Map) {
+      print("⚠️ No sensor data available for $cameraId");
+      continue;
+    }
 
-  final attribution = AlertSourceAttribution.fromSignals(
-    yoloConf: features[0],
-    temperature: features[1],
-    humidity: features[2],
-    mq2: features[3],
-    flame: features[4],
-    thermalMax: features[5],
-    thermalAvg: features[6],
-    yoloFireConf: features[7],
-    yoloSmokeConf: features[8],
-    yoloNoFireConf: features[9],
-  );
+    final sensorData = sensorSnap.value as Map;
 
-  // Normalize
-  List<double> normalized = List.generate(
-    features.length,
-    (i) => (features[i] - means[i]) / stds[i],
-  );
+    // Build input features - matching background_cnn_service.dart field names
+    final List<double> features = [
+      _toDouble(yoloData["yolo_conf"]),
+      _toDouble(sensorData["DHT_Temp"]),
+      _toDouble(sensorData["DHT_Humidity"]),
+      _toDouble(sensorData["MQ2_Value"]),
+      _toDouble(sensorData["Flame_Det"]),
+      _toDouble(sensorData["thermal_max"]),
+      _toDouble(sensorData["thermal_avg"]),
+      _toDouble(yoloData["yolo_fire_conf"]),
+      _toDouble(yoloData["yolo_smoke_conf"]),
+      _toDouble(yoloData["yolo_no_fire_conf"] == null ? 1.0 : yoloData["yolo_no_fire_conf"]),
+    ];
 
-  // Run inference - same format as background_cnn_service
-  var input = [normalized.map((v) => [v]).toList()];
-  var output = List.generate(1, (_) => List.filled(2, 0.0));
-  
-  interpreter.run(input, output);
+    final attribution = AlertSourceAttribution.fromSignals(
+      yoloConf: features[0],
+      temperature: features[1],
+      humidity: features[2],
+      mq2: features[3],
+      flame: features[4],
+      thermalMax: features[5],
+      thermalAvg: features[6],
+      yoloFireConf: features[7],
+      yoloSmokeConf: features[8],
+      yoloNoFireConf: features[9],
+    );
 
-  // Parse results
-  final severity = output[0][0];
-  final alert = output[0][1];
+    // Normalize
+    final List<double> normalized = List.generate(
+      features.length,
+      (i) => (features[i] - means[i]) / stds[i],
+    );
+
+    // Run inference - same format as background_cnn_service
+    final input = [normalized.map((v) => [v]).toList()];
+    final output = List.generate(1, (_) => List.filled(2, 0.0));
+    interpreter.run(input, output);
+
+    // Parse results
+    final severity = output[0][0];
+    final alert = output[0][1];
 
     // Match GlobalAlertHandler thresholds
-    final bool cautionNow =
-      (severity >= 0.40 && alert >= 0.60) ||
-      (severity >= 0.55 && alert >= 0.45);
-    final bool ignitionNow =
-      (severity >= 0.60 && alert >= 0.55) ||
-      (severity >= 0.70 && alert >= 0.40);
-    final bool dangerousNow =
-      (severity >= 0.70 && alert >= 0.40) ||
-      (severity >= 0.95 && alert >= 0.55);
+    final bool cautionNow = severity >= 0.40 && alert >= 0.73;
+    final bool ignitionNow = severity >= 0.55 && alert >= 0.75;
+    final bool dangerousNow = severity >= 0.70 && alert >= 0.80;
 
-  String label = "NO_FIRE";
-  if (dangerousNow) {
-    label = "EXTREME FIRE DANGER";
-  } else if (ignitionNow) {
-    label = "IGNITION ANOMALY";
-  } else if (cautionNow) {
-    label = "FIRE-LIKE ACTIVITY";
+    String label = "NO_FIRE";
+    if (dangerousNow) {
+      label = "EXTREME FIRE DANGER";
+    } else if (ignitionNow) {
+      label = "IGNITION ANOMALY";
+    } else if (cautionNow) {
+      label = "FIRE-LIKE ACTIVITY";
+    }
+
+    print("🔥 AI Result [$cameraId]: $label (Severity: ${(severity * 100).toStringAsFixed(1)}%, Alert: ${(alert * 100).toStringAsFixed(1)}%)");
+
+    // Save to Firebase - camera-specific path
+    await rtdb.ref("cnn_results/$cameraId").set({
+      "severity": severity,
+      "alert": alert,
+      "prediction": label,
+      "timestamp": DateTime.now().toIso8601String(),
+      "source": "background_task",
+      "input": {
+        "image_url": yoloData["image_url"],
+        "yolo_conf": features[0],
+        "yolo_fire_conf": features[7],
+        "yolo_smoke_conf": features[8],
+        "yolo_no_fire_conf": features[9],
+      },
+      "sensor": {
+        "DHT_Temp": features[1],
+        "DHT_Humidity": features[2],
+        "MQ2_Value": features[3],
+        "Flame_Det": features[4],
+        "thermal_max": features[5],
+        "thermal_avg": features[6],
+      },
+      "attribution": attribution,
+    });
+
+    if (label != "NO_FIRE") {
+      final score = severity + alert;
+      if (score > topScore) {
+        topScore = score;
+        topAlert = {
+          'label': label,
+          'fireProb': (severity * 100).toStringAsFixed(1),
+          'cameraId': cameraId,
+        };
+      }
+    }
   }
-
-  print("🔥 AI Result: $label (Severity: ${(severity * 100).toStringAsFixed(1)}%, Alert: ${(alert * 100).toStringAsFixed(1)}%)");
-
-  // Save to Firebase - camera-specific path
-  await rtdb.ref("cnn_results/$cameraId").set({
-    "severity": severity,
-    "alert": alert,
-    "prediction": label,
-    "timestamp": DateTime.now().toIso8601String(),
-    "source": "background_task",
-    "input": {
-      "image_url": yoloData["image_url"],
-      "yolo_conf": features[0],
-      "yolo_fire_conf": features[7],
-      "yolo_smoke_conf": features[8],
-      "yolo_no_fire_conf": features[9],
-    },
-    "sensor": {
-      "DHT_Temp": features[1],
-      "DHT_Humidity": features[2],
-      "MQ2_Value": features[3],
-      "Flame_Det": features[4],
-      "thermal_max": features[5],
-      "thermal_avg": features[6],
-    },
-    "attribution": attribution,
-  });
 
   interpreter.close();
-  
-  // Only return result if there's an actual alert (not NO_FIRE)
-  if (label != "NO_FIRE") {
-    return {
-      'label': label,
-      'fireProb': (severity * 100).toStringAsFixed(1),
-      'cameraId': cameraId,
-    };
+  return topAlert;
+}
+
+Map<String, Map<String, dynamic>> _extractYoloEntries(dynamic rawRoot) {
+  final entries = <String, Map<String, dynamic>>{};
+  if (rawRoot is! Map) return entries;
+
+  final root = Map<String, dynamic>.from(rawRoot as Map);
+
+  final latest = root['latest'];
+  if (latest is Map) {
+    final payload = Map<String, dynamic>.from(latest as Map);
+    final cameraId = payload['camera_id']?.toString().trim() ?? '';
+    if (cameraId.isNotEmpty) {
+      payload['camera_id'] = cameraId;
+      entries[cameraId] = payload;
+    }
   }
-  
-  return null;
+
+  for (final entry in root.entries) {
+    final key = entry.key.toString();
+    if (key == 'latest') continue;
+
+    final value = entry.value;
+    if (value is! Map) continue;
+
+    Map<String, dynamic>? payload;
+    if (value['latest'] is Map) {
+      payload = Map<String, dynamic>.from(value['latest'] as Map);
+    } else {
+      payload = Map<String, dynamic>.from(value as Map);
+    }
+
+    final cameraId = (payload['camera_id']?.toString().trim().isNotEmpty == true)
+        ? payload['camera_id'].toString().trim()
+        : key;
+    if (cameraId.isEmpty) continue;
+
+    payload['camera_id'] = cameraId;
+    entries[cameraId] = payload;
+  }
+
+  return entries;
+}
+
+double _toDouble(dynamic v) {
+  if (v == null) return 0.0;
+  if (v is double) return v;
+  if (v is int) return v.toDouble();
+  return double.tryParse(v.toString()) ?? 0.0;
 }
 
 // Helper to show notifications from background task
@@ -260,7 +273,6 @@ Future<void> _showNotification(
   String body, {
   String channelId = 'apula_background',
   Importance importance = Importance.defaultImportance,
-  int? notificationId,
 }) async {
   final androidDetails = AndroidNotificationDetails(
     channelId,
@@ -272,7 +284,7 @@ Future<void> _showNotification(
   );
   
   await plugin.show(
-    notificationId ?? (DateTime.now().millisecondsSinceEpoch ~/ 1000),
+    DateTime.now().millisecondsSinceEpoch ~/ 1000,
     title,
     body,
     NotificationDetails(android: androidDetails),

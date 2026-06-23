@@ -6,6 +6,7 @@ import 'package:apula/providers/theme_provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:apula/services/auth_service.dart';
+import 'package:apula/utils/app_palette.dart';
 
 class SettingsPage extends StatefulWidget {
   final List<String> availableDevices;
@@ -17,7 +18,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  int _selectedIndex = 3;
+  int _selectedIndex = 4;
   String? _userName;
   String? _userEmail;
   bool _isLoading = true;
@@ -72,18 +73,53 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<bool> _handleBackToHome() async {
+    Navigator.pushReplacementNamed(context, '/home');
+    return false;
+  }
+
+  void _showSettingsGuideDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Settings Guide'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('1. Switch theme mode for day/night readability.'),
+            SizedBox(height: 8),
+            Text('2. Open Background AI Services to control monitoring jobs.'),
+            SizedBox(height: 8),
+            Text('3. Review notification and account preferences here.'),
+            SizedBox(height: 8),
+            Text('4. Use Log Out to safely end your session.'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
     final isDarkMode = themeProvider.isDarkMode;
-    const redColor = Color(0xFFA30000);
+    const accentColor = AppPalette.secondaryWarm;
 
     final gradientColors = isDarkMode
-        ? [Colors.black, redColor]
-        : [redColor, Colors.black];
-    final titleColor = Colors.white;
+      ? [AppPalette.darkBackground, AppPalette.darkCard]
+      : [const Color(0xFFFFF5DD), Colors.white];
+    final titleColor = isDarkMode ? Colors.white : Colors.black87;
 
-    return Scaffold(
+    return WillPopScope(
+      onWillPop: _handleBackToHome,
+      child: Scaffold(
       backgroundColor: isDarkMode ? Colors.black : Colors.white,
       body: SafeArea(
         child: Container(
@@ -101,7 +137,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Padding(
                 padding: const EdgeInsets.only(left: 10, top: 10),
                 child: InkWell(
-                  onTap: () => Navigator.pop(context),
+                  onTap: () => Navigator.pushReplacementNamed(context, '/home'),
                   borderRadius: BorderRadius.circular(30),
                   child: Container(
                     padding: const EdgeInsets.all(8),
@@ -117,14 +153,25 @@ class _SettingsPageState extends State<SettingsPage> {
 
               // 🏷️ Title
               Padding(
-                padding: const EdgeInsets.only(left: 20, top: 5),
-                child: Text(
-                  "Settings",
-                  style: TextStyle(
-                    color: titleColor,
-                    fontSize: 30,
-                    fontWeight: FontWeight.bold,
-                  ),
+                padding: const EdgeInsets.only(left: 20, top: 5, right: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        "Settings",
+                        style: TextStyle(
+                          color: titleColor,
+                          fontSize: 30,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'How this page works',
+                      onPressed: _showSettingsGuideDialog,
+                      icon: Icon(Icons.info_outline, color: titleColor),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 50),
@@ -143,7 +190,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           topRight: Radius.circular(25),
                         ),
                         border: const Border(
-                          top: BorderSide(color: redColor, width: 3),
+                          top: BorderSide(color: accentColor, width: 3),
                         ),
                       ),
                       child: SingleChildScrollView(
@@ -157,14 +204,14 @@ class _SettingsPageState extends State<SettingsPage> {
                             // 🧍 User Info
                             _isLoading
                                 ? const CircularProgressIndicator(
-                                    color: redColor,
+                                    color: accentColor,
                                   )
                                 : Column(
                                     children: [
                                       Text(
                                         _userName ?? "Unknown User",
                                         style: const TextStyle(
-                                          color: redColor,
+                                          color: accentColor,
                                           fontSize: 20,
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -218,6 +265,18 @@ class _SettingsPageState extends State<SettingsPage> {
                               "About",
                               onTap: () =>
                                   Navigator.pushNamed(context, '/about'),
+                            ),
+                            _buildSettingsTile(
+                              isDarkMode,
+                              Icons.description_outlined,
+                              "Terms of Service",
+                              onTap: () => Navigator.pushNamed(context, '/legal/terms'),
+                            ),
+                            _buildSettingsTile(
+                              isDarkMode,
+                              Icons.privacy_tip_outlined,
+                              "Privacy Policy",
+                              onTap: () => Navigator.pushNamed(context, '/legal/privacy'),
                             ),
                             _buildSettingsTile(
                               isDarkMode,
@@ -282,6 +341,7 @@ class _SettingsPageState extends State<SettingsPage> {
         onItemTapped: _onItemTapped,
         availableDevices: widget.availableDevices,
       ),
+    ),
     );
   }
 
@@ -292,12 +352,15 @@ class _SettingsPageState extends State<SettingsPage> {
         Navigator.pushReplacementNamed(context, '/home');
         break;
       case 1:
-        Navigator.pushReplacementNamed(context, '/live');
+        Navigator.pushReplacementNamed(context, '/live_footage');
         break;
       case 2:
-        Navigator.pushReplacementNamed(context, '/notifications');
+        Navigator.pushReplacementNamed(context, '/predictions');
         break;
       case 3:
+        Navigator.pushReplacementNamed(context, '/notifications');
+        break;
+      case 4:
         break;
     }
   }
@@ -308,10 +371,10 @@ class _SettingsPageState extends State<SettingsPage> {
     String title, {
     VoidCallback? onTap,
   }) {
-    const redColor = Color(0xFFA30000);
+    const accentColor = AppPalette.secondaryWarm;
     final tileColor = isDarkMode ? Colors.grey[850] : Colors.white;
     final textColor = isDarkMode ? Colors.white : Colors.black87;
-    final iconColor = isDarkMode ? Colors.white : redColor;
+    final iconColor = isDarkMode ? Colors.white : accentColor;
     final borderColor = isDarkMode
         ? Colors.grey[700]!
         : const Color(0xFFE0E0E0);
@@ -353,13 +416,13 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildThemeModeTile(BuildContext context) {
-    const redColor = Color(0xFFA30000);
+    const accentColor = AppPalette.secondaryWarm;
     final themeProvider = Provider.of<ThemeProvider>(context);
     final isDarkMode = themeProvider.isDarkMode;
 
     final tileColor = isDarkMode ? Colors.grey[850] : Colors.white;
     final textColor = isDarkMode ? Colors.white : Colors.black87;
-    final iconColor = isDarkMode ? Colors.white : redColor;
+    final iconColor = isDarkMode ? Colors.white : accentColor;
     final borderColor = isDarkMode
         ? Colors.grey[700]!
         : const Color(0xFFE0E0E0);
@@ -396,7 +459,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         trailing: Switch(
           value: isDarkMode,
-          activeColor: redColor,
+          activeColor: accentColor,
           onChanged: (value) {
             themeProvider.toggleTheme(value);
           },

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,24 +10,19 @@ import 'package:firebase_storage/firebase_storage.dart';
 import '../main.dart';
 
 class GlobalAlertHandler {
-  static DateTime? _lastModalTime;
-  static String? _lastModalType;
-  static DateTime? _cautionSnoozeUntil;
+  static final Map<String, DateTime> _lastModalTimeByCamera = {};
+  static final Map<String, String> _lastModalTypeByCamera = {};
+  static final Map<String, DateTime> _cautionSnoozeUntilByCamera = {};
   static const Duration modalCooldown = Duration(seconds: 30);
   static const Duration cautionSnoozeDuration = Duration(minutes: 5);
   static final ValueNotifier<bool> modalOpenListenable = ValueNotifier<bool>(false);
   static int _activeModalCount = 0;
 
-  // Stability counters
-  static int _dangerCounter = 0;
-  static int _confirmationCounter = 0;
+  static final Map<String, int> _dangerCounterByCamera = {};
+  static final Map<String, int> _confirmationCounterByCamera = {};
   static const int requiredStableCycles = 2;
 
-  // Single dispatch guard
-  static bool _dispatcherAlertSent = false;
-
-  // Track previous alert level for escalation detection
-  static String _lastAlertLevel = "none"; // "none", "caution", "confirmation", "dangerous"
+  static final Map<String, bool> _dispatcherAlertSentByCamera = {};
 
   static bool get hasActiveModal => modalOpenListenable.value;
 
@@ -42,203 +39,163 @@ class GlobalAlertHandler {
     return isDarkMode ? Colors.white : const Color(0xFFA30000);
   }
 
-  // =======================================================
-  // MAIN ENTRY POINT
-  // =======================================================
   static Future<void> showFireModal({
     required double alert,
     required double severity,
     required String snapshotUrl,
+    String snapshotBase64 = "",
     String deviceName = "Unknown Camera",
     String dominantSource = "unknown",
   }) async {
     print("🔥 FireModal | severity=$severity | alert=$alert");
     print("📍 Route now: ${currentRouteName.value}");
 
-    // ===================================================
-    // CLEAN ESCALATION LOGIC
-    // ===================================================
-
-    // Low-level caution
     final bool cautionNow =
         (severity >= 0.46 && alert >= 0.60) ||
         (severity >= 0.55 && alert >= 0.45);
 
-    // Confirmation-required escalation
-    // This includes your requested 0.70 / 0.40 condition
     final bool confirmationNow =
         (severity >= 0.70 && alert >= 0.40) ||
         (severity >= 0.95 && alert >= 0.55);
 
-    // True dangerous auto-dispatch
     final bool dangerousNow =
         (severity >= 0.90 && alert >= 0.70);
 
-    // If only one signal spikes very high, force confirmation
     final bool singleSignalHighSpike =
         (severity >= 0.90 || alert >= 0.90) &&
         !(severity >= 0.90 && alert >= 0.90);
 
-    // ===================================================
-    // STABILITY LOGIC
-    // ===================================================
+    final cameraId = deviceName.trim().isEmpty ? "Unknown Camera" : deviceName.trim();
+
+    final currentDangerCounter = _dangerCounterByCamera[cameraId] ?? 0;
+    final currentConfirmationCounter =
+        _confirmationCounterByCamera[cameraId] ?? 0;
+
     if (dangerousNow) {
-      _dangerCounter++;
+      _dangerCounterByCamera[cameraId] = currentDangerCounter + 1;
     } else {
-      _dangerCounter = 0;
+      _dangerCounterByCamera[cameraId] = 0;
     }
 
     if (confirmationNow) {
-      _confirmationCounter++;
+      _confirmationCounterByCamera[cameraId] = currentConfirmationCounter + 1;
     } else {
-      _confirmationCounter = 0;
+      _confirmationCounterByCamera[cameraId] = 0;
     }
 
-    final bool isDangerous = _dangerCounter >= requiredStableCycles;
+    final dangerCounter = _dangerCounterByCamera[cameraId] ?? 0;
+    final confirmationCounter = _confirmationCounterByCamera[cameraId] ?? 0;
+
+    final bool isDangerous = dangerCounter >= requiredStableCycles;
 
     final bool isConfirmation =
-        (_confirmationCounter >= requiredStableCycles || singleSignalHighSpike) &&
+        (confirmationCounter >= requiredStableCycles || singleSignalHighSpike) &&
         !isDangerous;
 
     final bool isCaution =
         cautionNow && !isConfirmation && !isDangerous;
 
     print(
-      "Counters → danger=$_dangerCounter confirmation=$_confirmationCounter "
+      "Counters[$cameraId] → danger=$dangerCounter confirmation=$confirmationCounter "
       "States → danger=$isDangerous confirmation=$isConfirmation caution=$isCaution "
       "singleSignalHighSpike=$singleSignalHighSpike",
     );
 
-    print("Modal gates → hasActiveModal=$hasActiveModal");
-    print("Modal gates → lastModalType=$_lastModalType lastModalTime=$_lastModalTime");
-    print("Modal gates → cautionSnoozeUntil=$_cautionSnoozeUntil");
-
-    // ===================================================
-    // RESET INCIDENT WHEN NORMAL
-    // ===================================================
     if (!isDangerous && !isConfirmation && !isCaution) {
-      if (_dispatcherAlertSent) {
-        print("✅ Incident resolved, dispatcher lock reset");
+      if (_dispatcherAlertSentByCamera[cameraId] == true) {
+        print("✅ Incident resolved for $cameraId, dispatcher lock reset");
       }
-      _dispatcherAlertSent = false;
+      _dispatcherAlertSentByCamera[cameraId] = false;
       return;
     }
 
-    // ===================================================
-    // ALERT TYPE
-    // ===================================================
     final String alertType = isDangerous
         ? "🔥 EXTREME FIRE DANGER"
         : isConfirmation
             ? "⚠️ CONFIRMATION REQUIRED: FIRE-LIKE ACTIVITY"
             : "⚠️ CAUTION: FIRE-LIKE ACTIVITY";
 
-    // ===================================================
-    // USER CONTEXT
-    // ===================================================
     final uid = FirebaseAuth.instance.currentUser?.uid;
     final userProfile = await _getUserProfile();
 
-    // ===================================================
-    // ALWAYS LOG USER ALERT
-    // ===================================================
     await _createUserAlert(
       alert,
       severity,
       snapshotUrl,
+      snapshotBase64,
       deviceName,
       uid,
       alertType,
       dominantSource,
     );
 
-    // ===================================================
-    // 🔴 DANGEROUS MODE, AUTO DISPATCH
-    // ===================================================
     if (isDangerous) {
-      if (!_dispatcherAlertSent) {
+      if (!(_dispatcherAlertSentByCamera[cameraId] ?? false)) {
         await _createDispatcherAlert(
           userProfile,
           snapshotUrl,
+          snapshotBase64,
           deviceName,
           alertType,
           dominantSource: dominantSource,
         );
-        _dispatcherAlertSent = true;
+        _dispatcherAlertSentByCamera[cameraId] = true;
       }
 
-      _dangerCounter = 0;
-      _confirmationCounter = 0;
+      _dangerCounterByCamera[cameraId] = 0;
+      _confirmationCounterByCamera[cameraId] = 0;
 
-      // Detect escalation from caution to dangerous
-      final hasEscalated = _lastAlertLevel == "caution" || _lastAlertLevel == "confirmation";
-      if (_shouldShowModalFor("dangerous", isEscalated: hasEscalated)) {
-        _showHighModal(snapshotUrl, alertType, deviceName, dominantSource);
+      if (_shouldShowModalFor(cameraId, "dangerous")) {
+        _showHighModal(
+          snapshotUrl,
+          snapshotBase64,
+          alertType,
+          deviceName,
+          dominantSource,
+        );
       }
-      _lastAlertLevel = "dangerous";
-      _cautionSnoozeUntil = null; // Clear snooze on escalation
       return;
     }
 
-    // ===================================================
-    // 🟡 SINGLE HIGH SPIKE, FORCE CONFIRMATION
-    // ===================================================
     if (singleSignalHighSpike) {
       print("⚠️ Single high spike detected, forcing confirmation modal");
-      if (!hasActiveModal && _shouldShowModalFor("confirmation")) {
+      if (!hasActiveModal && _shouldShowModalFor(cameraId, "confirmation")) {
         _showMediumModal(
           userProfile,
           snapshotUrl,
+          snapshotBase64,
           deviceName,
           "⚠️ CONFIRMATION REQUIRED: FIRE-LIKE ACTIVITY",
           dominantSource,
         );
       }
-      _lastAlertLevel = "confirmation";
-      _cautionSnoozeUntil = null;
       return;
     }
 
-    // ===================================================
-    // 🟠 CONFIRMATION MODE
-    // ===================================================
-    if (isConfirmation) {
-      // Detect escalation from caution to confirmation
-      final hasEscalated = _lastAlertLevel == "caution";
-      if (_shouldShowModalFor("confirmation", isEscalated: hasEscalated)) {
-        _showMediumModal(
-          userProfile,
-          snapshotUrl,
-          deviceName,
-          alertType,
-          dominantSource,
-        );
-      }
-      _lastAlertLevel = "confirmation";
-      _cautionSnoozeUntil = null; // Clear snooze on escalation
-      return;
-    }
-
-    // ===================================================
-    // 🟡 CAUTION MODE
-    // ===================================================
-    if (isCaution && _shouldShowModalFor("caution")) {
+    if (isConfirmation && _shouldShowModalFor(cameraId, "confirmation")) {
       _showMediumModal(
         userProfile,
         snapshotUrl,
+        snapshotBase64,
         deviceName,
         alertType,
         dominantSource,
       );
-      _lastAlertLevel = "caution";
-      // Set snooze only for caution level
-      _cautionSnoozeUntil = DateTime.now().add(cautionSnoozeDuration);
+      return;
+    }
+
+    if (isCaution && _shouldShowModalFor(cameraId, "caution")) {
+      _showMediumModal(
+        userProfile,
+        snapshotUrl,
+        snapshotBase64,
+        deviceName,
+        alertType,
+        dominantSource,
+      );
     }
   }
 
-  // =======================================================
-  // FIRESTORE HELPERS
-  // =======================================================
   static Future<Map<String, dynamic>?> _getUserProfile() async {
     final email = FirebaseAuth.instance.currentUser?.email;
     if (email == null) return null;
@@ -256,6 +213,7 @@ class GlobalAlertHandler {
     double alert,
     double severity,
     String snapshotUrl,
+    String snapshotBase64,
     String deviceName,
     String? uid,
     String type,
@@ -266,6 +224,7 @@ class GlobalAlertHandler {
       "severity": severity,
       "type": type,
       "snapshotUrl": snapshotUrl,
+      "snapshotBase64": snapshotBase64,
       "device": deviceName,
       "deviceName": deviceName,
       "dominantSource": dominantSource,
@@ -281,6 +240,7 @@ class GlobalAlertHandler {
   static Future<void> _createDispatcherAlert(
     Map<String, dynamic>? user,
     String snapshotUrl,
+    String snapshotBase64,
     String deviceName,
     String alertType, {
     String? description,
@@ -291,6 +251,7 @@ class GlobalAlertHandler {
       "location": deviceName,
       "description": description ?? "Fire detected in $deviceName",
       "snapshotUrl": snapshotUrl,
+      "snapshotBase64": snapshotBase64,
       "dominantSource": dominantSource,
       "source": dominantSource,
       "sourceLabel": _sourceLabel(dominantSource),
@@ -306,10 +267,7 @@ class GlobalAlertHandler {
     });
   }
 
-  // =======================================================
-  // MODAL HELPERS
-  // =======================================================
-  static bool _shouldShowModalFor(String type, {bool isEscalated = false}) {
+  static bool _shouldShowModalFor(String cameraId, String type) {
     if (hasActiveModal) {
       return false;
     }
@@ -318,34 +276,31 @@ class GlobalAlertHandler {
       return true;
     }
 
-    // Bypass snooze if alert level has escalated (e.g., caution -> confirmation/dangerous)
-    if (isEscalated) {
-      print("⚡ Alert escalation detected - bypassing snooze");
-      return true;
-    }
-
+    final cautionSnoozeUntil = _cautionSnoozeUntilByCamera[cameraId];
     if ((type == "caution" || type == "confirmation") &&
-        _cautionSnoozeUntil != null) {
-      if (DateTime.now().isBefore(_cautionSnoozeUntil!)) {
-        print("⏳ Snooze active until $_cautionSnoozeUntil");
+        cautionSnoozeUntil != null) {
+      if (DateTime.now().isBefore(cautionSnoozeUntil)) {
         return false;
       }
     }
 
-    if (_lastModalTime == null || _lastModalType == null) {
+    final lastModalTime = _lastModalTimeByCamera[cameraId];
+    final lastModalType = _lastModalTypeByCamera[cameraId];
+
+    if (lastModalTime == null || lastModalType == null) {
       return true;
     }
 
-    if (_lastModalType != type) {
+    if (lastModalType != type) {
       return true;
     }
 
-    return DateTime.now().difference(_lastModalTime!) > modalCooldown;
+    return DateTime.now().difference(lastModalTime) > modalCooldown;
   }
 
-  static void _recordModalShown(String type) {
-    _lastModalTime = DateTime.now();
-    _lastModalType = type;
+  static void _recordModalShown(String cameraId, String type) {
+    _lastModalTimeByCamera[cameraId] = DateTime.now();
+    _lastModalTypeByCamera[cameraId] = type;
   }
 
   static void _beginModal() {
@@ -377,10 +332,47 @@ class GlobalAlertHandler {
     return "${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
   }
 
-  static Widget _snapshotWidget(String url) {
-    if (url.startsWith("http")) {
-      return Image.network(url, height: 160, fit: BoxFit.cover);
+  static Uint8List? _decodeBase64Image(String value) {
+    if (value.trim().isEmpty) return null;
+    try {
+      return base64Decode(value);
+    } catch (e) {
+      print("⚠️ Failed to decode base64 image: $e");
+      return null;
     }
+  }
+
+  static Widget _snapshotWidget({
+    required String snapshotUrl,
+    required String snapshotBase64,
+  }) {
+    final bytes = _decodeBase64Image(snapshotBase64);
+
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        height: 160,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const SizedBox(
+          height: 160,
+          child: Center(child: Text("Base64 snapshot unavailable")),
+        ),
+      );
+    }
+
+    if (snapshotUrl.startsWith("http")) {
+      return Image.network(
+        snapshotUrl,
+        height: 160,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const SizedBox(
+          height: 160,
+          child: Center(child: Text("Snapshot unavailable")),
+        ),
+      );
+    }
+
     return const SizedBox(
       height: 160,
       child: Center(child: Text("No snapshot available")),
@@ -478,6 +470,7 @@ class GlobalAlertHandler {
 
   static void _showHighModal(
     String snapshotUrl,
+    String snapshotBase64,
     String alertType,
     String cameraId,
     String dominantSource,
@@ -486,7 +479,7 @@ class GlobalAlertHandler {
     if (ctx == null) return;
     final thermalUrlFuture = _fetchThermalSnapshotUrl(cameraId);
 
-    _recordModalShown("dangerous");
+    _recordModalShown(cameraId, "dangerous");
     _beginModal();
 
     showDialog(
@@ -498,7 +491,10 @@ class GlobalAlertHandler {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _snapshotWidget(snapshotUrl),
+              _snapshotWidget(
+                snapshotUrl: snapshotUrl,
+                snapshotBase64: snapshotBase64,
+              ),
               _thermalSnapshotWidget(thermalUrlFuture),
               const SizedBox(height: 12),
               Text("Likely Trigger: ${_sourceLabel(dominantSource)}"),
@@ -525,6 +521,7 @@ class GlobalAlertHandler {
   static void _showMediumModal(
     Map<String, dynamic>? user,
     String snapshotUrl,
+    String snapshotBase64,
     String deviceName,
     String alertType,
     String dominantSource,
@@ -536,7 +533,7 @@ class GlobalAlertHandler {
     final modalType =
         alertType.contains("CONFIRMATION REQUIRED") ? "confirmation" : "caution";
 
-    _recordModalShown(modalType);
+    _recordModalShown(deviceName, modalType);
     _beginModal();
 
     const Duration inactivityTimeout = Duration(seconds: 15);
@@ -553,12 +550,12 @@ class GlobalAlertHandler {
     }
 
     Future.delayed(inactivityTimeout, () async {
-      if (resolved || _dispatcherAlertSent) return;
+      if (resolved || (_dispatcherAlertSentByCamera[deviceName] ?? false)) return;
       resolved = true;
       stopCountdown();
 
       if (suppressForFiveMinutes && snoozePreviewSeconds > 0) {
-        _cautionSnoozeUntil =
+        _cautionSnoozeUntilByCamera[deviceName] =
             DateTime.now().add(Duration(seconds: snoozePreviewSeconds));
       }
 
@@ -570,17 +567,19 @@ class GlobalAlertHandler {
       await _createDispatcherAlert(
         user,
         snapshotUrl,
+        snapshotBase64,
         deviceName,
         "🔥 FIRE ALERT (NO USER RESPONSE)",
         description: "Fire detected in $deviceName, user no response",
         dominantSource: dominantSource,
       );
 
-      _dispatcherAlertSent = true;
+      _dispatcherAlertSentByCamera[deviceName] = true;
 
       Future.delayed(const Duration(milliseconds: 150), () {
         _showAutoDispatchModal(
           snapshotUrl,
+          snapshotBase64,
           "Alert sent due to user no response.",
           deviceName,
           dominantSource,
@@ -621,7 +620,10 @@ class GlobalAlertHandler {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _snapshotWidget(snapshotUrl),
+                  _snapshotWidget(
+                    snapshotUrl: snapshotUrl,
+                    snapshotBase64: snapshotBase64,
+                  ),
                   _thermalSnapshotWidget(thermalUrlFuture),
                   const SizedBox(height: 12),
                   const Text("Please confirm if this is a real fire."),
@@ -666,7 +668,7 @@ class GlobalAlertHandler {
                   resolved = true;
                   stopCountdown();
                   if (suppressForFiveMinutes) {
-                    _cautionSnoozeUntil =
+                    _cautionSnoozeUntilByCamera[deviceName] =
                         DateTime.now().add(Duration(seconds: snoozePreviewSeconds));
                   }
                   Navigator.pop(dialogCtx);
@@ -682,12 +684,12 @@ class GlobalAlertHandler {
                   resolved = true;
                   stopCountdown();
                   if (suppressForFiveMinutes) {
-                    _cautionSnoozeUntil =
+                    _cautionSnoozeUntilByCamera[deviceName] =
                         DateTime.now().add(Duration(seconds: snoozePreviewSeconds));
                   }
                   Navigator.pop(dialogCtx);
 
-                  if (_dispatcherAlertSent) {
+                  if (_dispatcherAlertSentByCamera[deviceName] == true) {
                     print("🚫 Dispatcher already alerted, skipping duplicate");
                     return;
                   }
@@ -695,12 +697,13 @@ class GlobalAlertHandler {
                   await _createDispatcherAlert(
                     user,
                     snapshotUrl,
+                    snapshotBase64,
                     deviceName,
                     "🔥 FIRE CONFIRMED BY USER",
                     dominantSource: dominantSource,
                   );
 
-                  _dispatcherAlertSent = true;
+                  _dispatcherAlertSentByCamera[deviceName] = true;
                 },
                 child: const Text("CONFIRM FIRE"),
               ),
@@ -713,6 +716,7 @@ class GlobalAlertHandler {
 
   static void _showAutoDispatchModal(
     String snapshotUrl,
+    String snapshotBase64,
     String message,
     String cameraId,
     String dominantSource,
@@ -721,7 +725,7 @@ class GlobalAlertHandler {
     if (ctx == null) return;
     final thermalUrlFuture = _fetchThermalSnapshotUrl(cameraId);
 
-    _recordModalShown("auto");
+    _recordModalShown(cameraId, "auto");
     _beginModal();
 
     showDialog(
@@ -733,7 +737,10 @@ class GlobalAlertHandler {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _snapshotWidget(snapshotUrl),
+              _snapshotWidget(
+                snapshotUrl: snapshotUrl,
+                snapshotBase64: snapshotBase64,
+              ),
               _thermalSnapshotWidget(thermalUrlFuture),
               const SizedBox(height: 12),
               Text("Likely Trigger: ${_sourceLabel(dominantSource)}"),

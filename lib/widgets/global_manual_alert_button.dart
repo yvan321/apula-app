@@ -5,13 +5,27 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:apula/main.dart' show currentRouteName, hasPopupRoute, navigatorKey;
 import 'package:apula/services/global_alert_handler.dart';
+import 'package:apula/utils/app_palette.dart';
 
 class GlobalManualAlertButton extends StatefulWidget {
-  const GlobalManualAlertButton({super.key});
+  final bool inline;
+  final bool compactCircle;
+  final bool forceShowOnHome;
+  final double compactSize;
+
+  const GlobalManualAlertButton({
+    super.key,
+    this.inline = false,
+    this.compactCircle = false,
+    this.forceShowOnHome = false,
+    this.compactSize = 142,
+  });
 
   @override
   State<GlobalManualAlertButton> createState() => _GlobalManualAlertButtonState();
@@ -64,10 +78,19 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
         }
 
         final routeName = currentRouteName.value;
-        final hideForRoute = routeName == '/' ||
-            routeName == '/login' ||
-            routeName == '/register' ||
-            routeName == '/verification';
+        final fallbackRouteName = ModalRoute.of(
+              navigatorKey.currentContext ?? context,
+            )
+            ?.settings
+            .name;
+        final effectiveRouteName = routeName ?? fallbackRouteName;
+
+        final hideForRoute = effectiveRouteName == '/' ||
+            effectiveRouteName == '/login' ||
+            effectiveRouteName == '/register' ||
+            effectiveRouteName == '/verification' ||
+            ((effectiveRouteName == null || effectiveRouteName == '/home') &&
+                !widget.forceShowOnHome);
         final hideForPopup = hasPopupRoute.value;
         final hideForGlobalAlert = GlobalAlertHandler.hasActiveModal;
 
@@ -76,20 +99,153 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
         }
 
         final bottomInset = MediaQuery.of(context).padding.bottom;
+        final button = widget.compactCircle
+            ? _buildCompactCircleButton(context)
+            : _buildExtendedButton();
+
+        if (widget.inline) {
+          return button;
+        }
 
         return Positioned(
           right: 16,
           bottom: 86 + bottomInset,
-          child: FloatingActionButton.extended(
-            heroTag: 'global_manual_alert_btn',
-            backgroundColor: const Color(0xFFA30000),
-            foregroundColor: Colors.white,
-            onPressed: _sending ? null : _openManualAlertModal,
-            icon: const Icon(Icons.warning_amber_rounded),
-            label: const Text('Emergency Alert'),
-          ),
+          child: button,
         );
       },
+    );
+  }
+
+  Widget _buildExtendedButton() {
+    return FloatingActionButton.extended(
+      heroTag: widget.inline ? null : 'global_manual_alert_btn',
+      backgroundColor: const Color(0xFFA30000),
+      foregroundColor: Colors.white,
+      onPressed: _sending ? null : _openManualAlertModal,
+      icon: const Icon(Icons.warning_amber_rounded),
+      label: const Text('Emergency Alert'),
+    );
+  }
+
+  Widget _buildCompactCircleButton(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surface = Theme.of(context).colorScheme.surface;
+    final outerSize = widget.compactSize;
+    final ringSize = outerSize - 6;
+    final centerSize = outerSize * 0.69;
+    final iconWrapSize = outerSize * 0.24;
+    final iconSize = outerSize * 0.14;
+    final dotSize = outerSize * 0.042;
+    final ringStroke = outerSize * 0.07;
+    final ringBase = isDark ? Colors.white24 : const Color(0xFFE8D6D6);
+    final ringGradient = SweepGradient(
+      startAngle: -1.35,
+      endAngle: 4.2,
+      colors: const [
+        Color(0xFFFFC0C0),
+        Color(0xFFFF6A6A),
+        Color(0xFFCC1F1F),
+      ],
+    );
+
+    return SizedBox(
+      width: outerSize,
+      height: outerSize,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: ringSize,
+            height: ringSize,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFCC1F1F).withOpacity(0.28),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: CustomPaint(
+              painter: _RingPainter(
+                baseColor: ringBase,
+                gradient: ringGradient,
+                progress: 0.78,
+                strokeWidth: ringStroke,
+              ),
+            ),
+          ),
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _sending ? null : _openManualAlertModal,
+              borderRadius: BorderRadius.circular(999),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: centerSize,
+                height: centerSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: surface,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(isDark ? 0.32 : 0.14),
+                      blurRadius: 13,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: _sending
+                    ? Padding(
+                        padding: EdgeInsets.all(outerSize * 0.22),
+                        child: const CircularProgressIndicator(strokeWidth: 2.4),
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: iconWrapSize,
+                            height: iconWrapSize,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFCC1F1F),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.warning_amber_rounded,
+                              color: Colors.white,
+                              size: iconSize,
+                            ),
+                          ),
+                          SizedBox(height: outerSize * 0.04),
+                          Text(
+                            'SOS',
+                            style: const TextStyle(
+                              color: Color(0xFFB11A1A),
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                              letterSpacing: 0.35,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: outerSize * 0.18,
+            bottom: outerSize * 0.2,
+            child: Container(
+              width: dotSize,
+              height: dotSize,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(isDark ? 0.5 : 0.85),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -124,6 +280,11 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
     }
 
     String selectedReason = _reasons.first;
+    String selectedLocationSource = 'house';
+    String? currentLocationAddress;
+    double? currentLatitude;
+    double? currentLongitude;
+    bool isFetchingCurrentLocation = false;
     final detailsController = TextEditingController();
     XFile? pickedImage;
 
@@ -168,6 +329,85 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
                         });
                       },
                     ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Alert location source:',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('House Address'),
+                          selected: selectedLocationSource == 'house',
+                          onSelected: (_) {
+                            setModalState(() {
+                              selectedLocationSource = 'house';
+                            });
+                          },
+                        ),
+                        ChoiceChip(
+                          label: const Text('Current Location'),
+                          selected: selectedLocationSource == 'current',
+                          onSelected: (_) {
+                            setModalState(() {
+                              selectedLocationSource = 'current';
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (selectedLocationSource == 'current')
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          OutlinedButton.icon(
+                            icon: isFetchingCurrentLocation
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.my_location),
+                            label: Text(
+                              isFetchingCurrentLocation
+                                  ? 'Getting location...'
+                                  : 'Use Current Location',
+                            ),
+                            onPressed: isFetchingCurrentLocation
+                                ? null
+                                : () async {
+                                    setModalState(() {
+                                      isFetchingCurrentLocation = true;
+                                    });
+
+                                    final result = await _resolveCurrentLocation();
+
+                                    if (!mounted) return;
+
+                                    setModalState(() {
+                                      isFetchingCurrentLocation = false;
+                                      if (result != null) {
+                                        currentLocationAddress = result['address'] as String;
+                                        currentLatitude = result['lat'] as double;
+                                        currentLongitude = result['lng'] as double;
+                                      }
+                                    });
+                                  },
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            currentLocationAddress ??
+                                'No current location selected yet.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).textTheme.bodySmall?.color,
+                            ),
+                          ),
+                        ],
+                      ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: detailsController,
@@ -255,6 +495,32 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
                     FocusManager.instance.primaryFocus?.unfocus();
                     await Future.delayed(const Duration(milliseconds: 80));
 
+                    if (selectedLocationSource == 'current' &&
+                        (currentLocationAddress == null ||
+                            currentLatitude == null ||
+                            currentLongitude == null)) {
+                      final fetched = await _resolveCurrentLocation();
+                      if (fetched != null) {
+                        currentLocationAddress = fetched['address'] as String;
+                        currentLatitude = fetched['lat'] as double;
+                        currentLongitude = fetched['lng'] as double;
+                      }
+                    }
+
+                    if (selectedLocationSource == 'current' &&
+                        (currentLocationAddress == null ||
+                            currentLatitude == null ||
+                            currentLongitude == null)) {
+                      ScaffoldMessenger.of(rootContext).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Current location is required for this alert. Tap "Use Current Location" and wait for success before sending.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+
                     final confirm = await showDialog<bool>(
                       context: rootContext,
                       useRootNavigator: true,
@@ -298,6 +564,10 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
         reason: selectedReason,
         details: detailsController.text.trim(),
         imagePath: pickedImage?.path,
+        locationSource: selectedLocationSource,
+        currentLocationAddress: currentLocationAddress,
+        currentLatitude: currentLatitude,
+        currentLongitude: currentLongitude,
       );
     }
 
@@ -308,6 +578,10 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
     required String reason,
     required String details,
     required String? imagePath,
+    required String locationSource,
+    required String? currentLocationAddress,
+    required double? currentLatitude,
+    required double? currentLongitude,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -335,6 +609,10 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
       'reason': reason,
       'details': details,
       'imagePath': imagePath ?? '',
+      'locationSource': locationSource,
+      'currentLocationAddress': currentLocationAddress ?? '',
+      'currentLatitude': currentLatitude,
+      'currentLongitude': currentLongitude,
       'createdAt': DateTime.now().toIso8601String(),
     };
 
@@ -422,12 +700,32 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
 
     final reason = (queueItem['reason'] ?? 'Other emergency').toString();
     final details = (queueItem['details'] ?? '').toString();
+    final locationSource = (queueItem['locationSource'] ?? 'house').toString();
+    final currentLocationAddress =
+      (queueItem['currentLocationAddress'] ?? '').toString();
+    final currentLatitude = (queueItem['currentLatitude'] as num?)?.toDouble();
+    final currentLongitude = (queueItem['currentLongitude'] as num?)?.toDouble();
+    final useCurrentLocation =
+      locationSource == 'current' &&
+      currentLocationAddress.isNotEmpty &&
+      currentLatitude != null &&
+      currentLongitude != null;
+
+    final alertLocation = useCurrentLocation
+      ? currentLocationAddress
+      : (userData['address'] ?? 'Unknown Location').toString();
+    final alertLatitude = useCurrentLocation
+      ? currentLatitude
+      : (userData['latitude'] as num?)?.toDouble() ?? 0;
+    final alertLongitude = useCurrentLocation
+      ? currentLongitude
+      : (userData['longitude'] as num?)?.toDouble() ?? 0;
     final messagePrefix = 'User used the alert manually.';
     final detailsLine = details.isEmpty ? '' : ' Details: $details';
 
     await FirebaseFirestore.instance.collection('alerts').add({
       'type': '🚨 MANUAL PANIC ALERT',
-      'location': userData['address'] ?? 'Unknown Location',
+      'location': alertLocation,
       'description': '$messagePrefix Reason: $reason.$detailsLine',
       'manualAlert': true,
       'triggerMethod': 'manual_button',
@@ -436,6 +734,7 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
       'dominantSource': 'manual',
       'reportedReason': reason,
       'reportedDetails': details,
+      'locationSource': useCurrentLocation ? 'current' : 'house',
       'queuedCreatedAt': queueItem['createdAt'],
       'snapshotBase64': imageBase64,
       'snapshotEncodeError': snapshotEncodeError,
@@ -445,11 +744,113 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
       'userId': user.uid,
       'userEmail': user.email,
       'userName': userData['name'] ?? 'Unknown',
-      'userAddress': userData['address'] ?? 'N/A',
+      'userAddress': alertLocation,
       'userContact': userData['contact'] ?? 'N/A',
-      'userLatitude': userData['latitude'] ?? 0,
-      'userLongitude': userData['longitude'] ?? 0,
+      'userLatitude': alertLatitude,
+      'userLongitude': alertLongitude,
     });
+  }
+
+  Future<Map<String, dynamic>?> _resolveCurrentLocation() async {
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        _showRootSnackBar('Location services are turned off.');
+        return null;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _showRootSnackBar('Location permission is required to use current location.');
+        return null;
+      }
+
+      // Fast path: use recent, accurate last known position when available.
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (_isRecentAndAccurate(lastKnown)) {
+        final address = await _resolveAddressForPosition(lastKnown!);
+        return {
+          'address': address,
+          'lat': lastKnown.latitude,
+          'lng': lastKnown.longitude,
+        };
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 8),
+      );
+      final resolvedAddress = await _resolveAddressForPosition(position);
+
+      return {
+        'address': resolvedAddress,
+        'lat': position.latitude,
+        'lng': position.longitude,
+      };
+    } catch (e) {
+      _showRootSnackBar('Could not get current location: $e');
+      return null;
+    }
+  }
+
+  bool _isRecentAndAccurate(Position? position) {
+    if (position == null) return false;
+
+    final timestamp = position.timestamp;
+    final age = timestamp == null
+        ? const Duration(days: 1)
+        : DateTime.now().difference(timestamp);
+    final isRecent = age <= const Duration(minutes: 3);
+    final isAccurateEnough = position.accuracy <= 80;
+
+    return isRecent && isAccurateEnough;
+  }
+
+  Future<String> _resolveAddressForPosition(Position position) async {
+    String resolvedAddress =
+        'Lat ${position.latitude.toStringAsFixed(6)}, Lng ${position.longitude.toStringAsFixed(6)}';
+
+    try {
+      final placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      ).timeout(const Duration(seconds: 2));
+
+      if (placemarks.isNotEmpty) {
+        final p = placemarks.first;
+        final pieces = [
+          p.name,
+          p.street,
+          p.subLocality,
+          p.locality,
+          p.administrativeArea,
+          p.postalCode,
+        ]
+            .where((part) => part != null && part!.trim().isNotEmpty)
+            .cast<String>()
+            .toList();
+        if (pieces.isNotEmpty) {
+          resolvedAddress = pieces.join(', ');
+        }
+      }
+    } catch (_) {
+      // Keep coordinate fallback if reverse geocoding fails or times out.
+    }
+
+    return resolvedAddress;
+  }
+
+  void _showRootSnackBar(String message) {
+    final rootContext = _dialogContext();
+    if (rootContext == null) return;
+    ScaffoldMessenger.of(rootContext).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   Future<void> _enqueueManualAlert(Map<String, dynamic> queueItem) async {
@@ -503,5 +904,55 @@ class _GlobalManualAlertButtonState extends State<GlobalManualAlertButton> {
     final remainingMs = _manualAlertCooldown.inMilliseconds - elapsed;
     if (remainingMs <= 0) return null;
     return Duration(milliseconds: remainingMs);
+  }
+}
+
+class _RingPainter extends CustomPainter {
+  final Color baseColor;
+  final Gradient gradient;
+  final double progress;
+  final double strokeWidth;
+
+  _RingPainter({
+    required this.baseColor,
+    required this.gradient,
+    required this.progress,
+    required this.strokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final center = rect.center;
+    final radius = (size.shortestSide - strokeWidth) / 2;
+
+    final basePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = strokeWidth
+      ..color = baseColor;
+
+    final activePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = strokeWidth
+      ..shader = gradient.createShader(rect);
+
+    canvas.drawCircle(center, radius, basePaint);
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -1.35,
+      6.28 * progress,
+      false,
+      activePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RingPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.baseColor != baseColor ||
+        oldDelegate.strokeWidth != strokeWidth ||
+        oldDelegate.gradient != gradient;
   }
 }

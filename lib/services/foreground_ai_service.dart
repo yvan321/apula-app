@@ -3,13 +3,12 @@ import 'dart:typed_data';
 import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import '../firebase_yolo_options.dart';
+import '../utils/alert_source_attribution.dart';
 
 // Foreground Task Handler (runs in isolate)
 @pragma('vm:entry-point')
@@ -18,7 +17,6 @@ class ForegroundAITaskHandler extends TaskHandler {
   List<double>? _means;
   List<double>? _stds;
   DatabaseReference? _yoloRef;
-  DatabaseReference? _sensorRef;
   DatabaseReference? _rtdb;
   FlutterLocalNotificationsPlugin? _localNotifications;
   bool _isInferenceRunning = false;
@@ -78,8 +76,7 @@ class ForegroundAITaskHandler extends TaskHandler {
       // Firebase refs - USE YOLO FIREBASE APP
       final rtdb = FirebaseDatabase.instanceFor(app: yoloApp);
       _rtdb = rtdb.ref();
-      _yoloRef = rtdb.ref("cam_detections/latest");
-      _sensorRef = rtdb.ref("sensor_data");
+      _yoloRef = rtdb.ref("cam_detections");
       print('✅ Firebase RTDB refs created from yoloApp');
 
       // Initialize local notifications
@@ -123,53 +120,17 @@ class ForegroundAITaskHandler extends TaskHandler {
     );
   }
 
-  Future<List<String>> _getLinkedCameraIds() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return const [];
-
-    final byUid = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-
-    if (byUid.exists) {
-      final data = byUid.data() ?? <String, dynamic>{};
-      final cameraIds = data['cameraIds'];
-      if (cameraIds is List) {
-        return cameraIds.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
-      }
-    }
-
-    final byEmail = await FirebaseFirestore.instance
-        .collection('users')
-        .where('email', isEqualTo: user.email)
-        .limit(1)
-        .get();
-
-    if (byEmail.docs.isEmpty) return const [];
-
-    final data = byEmail.docs.first.data();
-    final cameraIds = data['cameraIds'];
-    if (cameraIds is! List) return const [];
-
-    return cameraIds.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
-  }
-
   Future<void> _runInference() async {
     try {
-      final linkedCameraIds = await _getLinkedCameraIds();
-      if (linkedCameraIds.isEmpty) {
-        _eventNotificationCounts.clear();
-        _lastNotificationTimeByCamera.clear();
-        _lastAlertTime = null;
+      if (_interpreter == null || _means == null || _stds == null) {
         FlutterForegroundTask.updateService(
           notificationTitle: 'APULA AI Monitoring',
-          notificationText: 'No linked cameras for this account',
+          notificationText: 'Model not ready yet...',
         );
         return;
       }
 
-      // Get camera_id from latest YOLO data
+      // Read per-camera YOLO latest entries from cam_detections/{cameraId}/latest
       final yoloSnap = await _yoloRef!.get();
       if (!yoloSnap.exists) {
         FlutterForegroundTask.updateService(
@@ -179,76 +140,93 @@ class ForegroundAITaskHandler extends TaskHandler {
         return;
       }
 
-      final yoloData = yoloSnap.value as Map;
-      final String cameraId = yoloData["camera_id"]?.toString() ?? "cam_01";
-
-      if (!linkedCameraIds.contains(cameraId)) {
+      final yoloEntries = _extractYoloEntries(yoloSnap.value);
+      if (yoloEntries.isEmpty) {
         FlutterForegroundTask.updateService(
           notificationTitle: 'APULA AI Monitoring',
-          notificationText: 'Waiting for linked camera activity...',
+          notificationText: 'Waiting for camera data...',
         );
         return;
       }
 
-      // Get pre-computed CNN results instead of doing inference
-      final cnnSnap = await _rtdb!.child("cnn_results/$cameraId").get();
-      if (!cnnSnap.exists) {
+      int activeAlerts = 0;
+      int processedCameras = 0;
+      double topScore = -1;
+      String topLabel = "NO_FIRE";
+      String topCameraId = "";
+      double topSeverity = 0;
+      double topAlert = 0;
+
+      for (final entry in yoloEntries.entries) {
+        final cameraId = entry.key;
+        final cnnSnap = await _rtdb!.child("cnn_results/$cameraId").get();
+        if (!cnnSnap.exists || cnnSnap.value is! Map) {
+          continue;
+        }
+
+        processedCameras++;
+
+        final cnnData = Map<String, dynamic>.from(cnnSnap.value as Map);
+        final double severity = _toDouble(cnnData["severity"]);
+        final double alert = _toDouble(cnnData["alert"]);
+
+        final bool cautionNow = severity >= 0.40 && alert >= 0.73;
+        final bool ignitionNow = severity >= 0.55 && alert >= 0.75;
+        final bool dangerousNow = severity >= 0.70 && alert >= 0.80;
+
+        String label = "NO_FIRE";
+        if (dangerousNow) {
+          label = "🔴 EXTREME FIRE DANGER";
+        } else if (ignitionNow) {
+          label = "🟠 IGNITION ANOMALY";
+        } else if (cautionNow) {
+          label = "🟡 FIRE-LIKE ACTIVITY";
+        }
+
+        final score = severity + alert;
+        if (score > topScore) {
+          topScore = score;
+          topLabel = label;
+          topCameraId = cameraId;
+          topSeverity = severity;
+          topAlert = alert;
+        }
+
+        if (label != "NO_FIRE") {
+          activeAlerts++;
+          await _showAlertNotification(
+            title: label,
+            body: 'Camera: $cameraId | Severity: ${(severity * 100).toStringAsFixed(1)}%',
+            severity: severity,
+            isExtreme: dangerousNow,
+            eventKey: '$cameraId|$label',
+            cameraId: cameraId,
+          );
+          print('🔥 AI: $label (Camera: $cameraId | Severity: ${(severity * 100).toStringAsFixed(1)}%, Alert: ${(alert * 100).toStringAsFixed(1)}%)');
+        }
+      }
+
+      if (processedCameras == 0) {
         FlutterForegroundTask.updateService(
           notificationTitle: 'APULA AI Monitoring',
-          notificationText: 'Waiting for CNN analysis...',
+          notificationText: 'Waiting for valid camera + sensor data...',
         );
-        return;
-      }
-
-      final cnnData = cnnSnap.value as Map;
-      final double severity = (cnnData["severity"] ?? 0.0).toDouble();
-      final double alert = (cnnData["alert"] ?? 0.0).toDouble();
-      final String snapshotUrl = (cnnData["input"]?["image_url"] ?? "") as String;
-
-        // Apply same thresholds as GlobalAlertHandler
-        final bool cautionNow =
-          (severity >= 0.40 && alert >= 0.60) ||
-          (severity >= 0.55 && alert >= 0.45);
-        final bool ignitionNow =
-          (severity >= 0.60 && alert >= 0.55) ||
-          (severity >= 0.70 && alert >= 0.40);
-        final bool dangerousNow =
-          (severity >= 0.70 && alert >= 0.40) ||
-          (severity >= 0.95 && alert >= 0.55);
-
-      String label = "NO_FIRE";
-      if (dangerousNow) {
-        label = "🔴 EXTREME FIRE DANGER";
-      } else if (ignitionNow) {
-        label = "🟠 IGNITION ANOMALY";
-      } else if (cautionNow) {
-        label = "🟡 FIRE-LIKE ACTIVITY";
-      }
-
-      // Update notification
-      final statusText =
-          '$label - Severity: ${(severity * 100).toStringAsFixed(1)}% | Alert: ${(alert * 100).toStringAsFixed(1)}%';
-      FlutterForegroundTask.updateService(
-        notificationTitle: 'APULA AI Monitoring',
-        notificationText: statusText,
-      );
-
-      // Send popup notification if alert detected
-      if (label != "NO_FIRE") {
-        await _showAlertNotification(
-          title: label,
-          body: 'Camera: $cameraId | Severity: ${(severity * 100).toStringAsFixed(1)}%',
-          severity: severity,
-          isExtreme: dangerousNow,
-          eventKey: '$cameraId|$label',
-          cameraId: cameraId,
+      } else if (activeAlerts == 0) {
+        FlutterForegroundTask.updateService(
+          notificationTitle: 'APULA AI Monitoring',
+          notificationText: '✅ NORMAL | Monitoring ${yoloEntries.length} cameras',
         );
-        print('🔥 AI: $label (Camera: $cameraId | Severity: ${(severity * 100).toStringAsFixed(1)}%, Alert: ${(alert * 100).toStringAsFixed(1)}%)');
-      } else {
+
         _eventNotificationCounts.clear();
-        _lastNotificationTimeByCamera.remove(cameraId);
+        _lastNotificationTimeByCamera.clear();
         _lastAlertTime = null;
-        print('✅ Status: NORMAL (Camera: $cameraId)');
+        print('✅ Status: NORMAL (${yoloEntries.length} cameras)');
+      } else {
+        FlutterForegroundTask.updateService(
+          notificationTitle: 'APULA AI Monitoring',
+          notificationText:
+              '$topLabel | $topCameraId | Severity: ${(topSeverity * 100).toStringAsFixed(1)}% | Alert: ${(topAlert * 100).toStringAsFixed(1)}% | Active: $activeAlerts',
+        );
       }
     } catch (e) {
       print('❌ Inference Error: $e');
@@ -258,6 +236,151 @@ class ForegroundAITaskHandler extends TaskHandler {
         notificationText: 'Error: ${errorMsg.length > 50 ? errorMsg.substring(0, 50) : errorMsg}',
       );
     }
+  }
+
+  Future<Map<String, dynamic>?> _runInferenceForCamera(
+    String cameraId,
+    Map<String, dynamic> yoloData,
+  ) async {
+    DataSnapshot sensorSnap = await _rtdb!.child("sensor_data/$cameraId/latest").get();
+    if (!sensorSnap.exists) {
+      sensorSnap = await _rtdb!.child("sensor_data/latest").get();
+    }
+
+    if (!sensorSnap.exists || sensorSnap.value is! Map) {
+      return null;
+    }
+
+    final sensorData = Map<String, dynamic>.from(sensorSnap.value as Map);
+
+    final List<double> features = [
+      _toDouble(yoloData["yolo_conf"]),
+      _toDouble(sensorData["DHT_Temp"]),
+      _toDouble(sensorData["DHT_Humidity"]),
+      _toDouble(sensorData["MQ2_Value"]),
+      _toDouble(sensorData["Flame_Det"]),
+      _toDouble(sensorData["thermal_max"]),
+      _toDouble(sensorData["thermal_avg"]),
+      _toDouble(yoloData["yolo_fire_conf"]),
+      _toDouble(yoloData["yolo_smoke_conf"]),
+      _toDouble(yoloData["yolo_no_fire_conf"] == null ? 1.0 : yoloData["yolo_no_fire_conf"]),
+    ];
+
+    final normalized = List<double>.generate(
+      features.length,
+      (i) => (features[i] - _means![i]) / _stds![i],
+    );
+
+    final input = [normalized.map((v) => [v]).toList()];
+    final output = List.generate(1, (_) => List.filled(2, 0.0));
+    _interpreter!.run(input, output);
+
+    final severity = output[0][0];
+    final alert = output[0][1];
+
+    final bool cautionNow = severity >= 0.40 && alert >= 0.73;
+    final bool ignitionNow = severity >= 0.55 && alert >= 0.75;
+    final bool dangerousNow = severity >= 0.70 && alert >= 0.80;
+
+    String label = "NO_FIRE";
+    if (dangerousNow) {
+      label = "🔴 EXTREME FIRE DANGER";
+    } else if (ignitionNow) {
+      label = "🟠 IGNITION ANOMALY";
+    } else if (cautionNow) {
+      label = "🟡 FIRE-LIKE ACTIVITY";
+    }
+
+    final attribution = AlertSourceAttribution.fromSignals(
+      yoloConf: features[0],
+      temperature: features[1],
+      humidity: features[2],
+      mq2: features[3],
+      flame: features[4],
+      thermalMax: features[5],
+      thermalAvg: features[6],
+      yoloFireConf: features[7],
+      yoloSmokeConf: features[8],
+      yoloNoFireConf: features[9],
+    );
+
+    await _rtdb!.child("cnn_results/$cameraId").set({
+      "severity": severity,
+      "alert": alert,
+      "prediction": label,
+      "timestamp": DateTime.now().toIso8601String(),
+      "source": "foreground_service",
+      "input": {
+        "image_url": (yoloData["image_url"] ?? "").toString(),
+        "yolo_conf": features[0],
+        "yolo_fire_conf": features[7],
+        "yolo_smoke_conf": features[8],
+        "yolo_no_fire_conf": features[9],
+      },
+      "sensor": {
+        "DHT_Temp": features[1],
+        "DHT_Humidity": features[2],
+        "MQ2_Value": features[3],
+        "Flame_Det": features[4],
+        "thermal_max": features[5],
+        "thermal_avg": features[6],
+      },
+      "attribution": attribution,
+    });
+
+    return {
+      'severity': severity,
+      'alert': alert,
+      'label': label,
+      'dangerousNow': dangerousNow,
+    };
+  }
+
+  Map<String, Map<String, dynamic>> _extractYoloEntries(dynamic rawRoot) {
+    final entries = <String, Map<String, dynamic>>{};
+    if (rawRoot is! Map) return entries;
+
+    final root = Map<String, dynamic>.from(rawRoot as Map);
+
+    final latest = root['latest'];
+    if (latest is Map) {
+      final latestId = latest['camera_id']?.toString().trim() ?? '';
+      if (latestId.isNotEmpty) {
+        final payload = Map<String, dynamic>.from(latest as Map);
+        payload['camera_id'] = latestId;
+        entries[latestId] = payload;
+      }
+    }
+
+    for (final entry in root.entries) {
+      final key = entry.key.toString();
+      if (key == 'latest') continue;
+
+      final value = entry.value;
+      if (value is! Map) continue;
+
+      Map<String, dynamic> payload;
+      if (value['latest'] is Map) {
+        final inner = value['latest'] as Map;
+        payload = Map<String, dynamic>.from(inner);
+      } else {
+        payload = Map<String, dynamic>.from(value);
+      }
+
+      final id = payload['camera_id']?.toString().trim() ?? key;
+      if (id.isEmpty) continue;
+      payload['camera_id'] = id;
+      entries[id] = payload;
+    }
+
+    return entries;
+  }
+
+  double _toDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is double) return v;
+    if (v is int) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0.0;
   }
 
   Future<void> _showAlertNotification({
@@ -288,8 +411,7 @@ class ForegroundAITaskHandler extends TaskHandler {
         return;
       }
 
-      // Reuse per-camera notification IDs so alerts replace older ones instead of stacking.
-      final int notificationId = 51000 + (cameraId.hashCode.abs() % 1000);
+      final int notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final AndroidNotificationDetails androidDetails =
           AndroidNotificationDetails(
         'apula_foreground_alerts',
@@ -297,6 +419,22 @@ class ForegroundAITaskHandler extends TaskHandler {
         channelDescription: 'Real-time fire detection alerts',
         importance: Importance.max,
         priority: Priority.max,
+        category: AndroidNotificationCategory.alarm,
+        fullScreenIntent: true,
+        ongoing: isExtreme,
+        autoCancel: !isExtreme,
+        actions: <AndroidNotificationAction>[
+          AndroidNotificationAction(
+            'confirm_fire',
+            'OPEN & CONFIRM',
+            showsUserInterface: true,
+          ),
+          AndroidNotificationAction(
+            'dismiss_alert',
+            'Dismiss',
+            cancelNotification: true,
+          ),
+        ],
         showWhen: true,
         enableVibration: true,
         playSound: true,

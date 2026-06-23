@@ -1,9 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lottie/lottie.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/gestures.dart';
 import 'package:apula/screens/register/map_picker.dart';
 import 'package:apula/screens/register/verification_screen.dart';
+import 'package:apula/screens/legal/terms_screen.dart';
+import 'package:apula/screens/legal/privacy_screen.dart';
 
 
 class RegisterScreen extends StatefulWidget {
@@ -14,15 +21,31 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  static const String _registerTutorialShownKey =
+      'register_tutorial_shown_v1';
+  static const String _tosVersion = '2026-06-10';
+  static const String _privacyVersion = '2026-06-10';
+
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _contactController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _confirmPasswordController = TextEditingController();
+
+  bool _acceptedTerms = false;
 
   double? selectedLat;
   double? selectedLng;
+  bool _isResolvingCurrentLocation = false;
+
+  final RegExp _fullNameRegex = RegExp(r'^[A-Za-z]+(?:\s+[A-Za-z]+)*$');
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeShowTutorial();
+    });
+  }
 
   @override
   void dispose() {
@@ -30,8 +53,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _contactController.dispose();
     _addressController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -51,11 +72,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final email = _emailController.text.trim().toLowerCase();
     final contact = _contactController.text.trim();
     final address = _addressController.text.trim();
-    final password = _passwordController.text.trim();
-    final confirmPassword = _confirmPasswordController.text.trim();
 
     if (email.contains("admin")) {
       _showSnackBar("Admin accounts cannot register in the app.", Colors.red);
+      return;
+    }
+
+    if (!_fullNameRegex.hasMatch(name)) {
+      _showSnackBar(
+        "Full name must contain letters and spaces only.",
+        Colors.red,
+      );
       return;
     }
 
@@ -63,21 +90,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         email.isEmpty ||
         contact.isEmpty ||
         address.isEmpty ||
-        password.isEmpty ||
-        confirmPassword.isEmpty ||
         selectedLat == null ||
         selectedLng == null) {
       _showSnackBar("All fields must be filled.", Colors.red);
-      return;
-    }
-
-    if (password != confirmPassword) {
-      _showSnackBar("Passwords do not match.", Colors.red);
-      return;
-    }
-
-    if (password.length < 6) {
-      _showSnackBar("Password must be at least 6 characters.", Colors.red);
       return;
     }
 
@@ -87,8 +102,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     try {
+      if (!_acceptedTerms) {
+        _showSnackBar("You must accept Terms and Privacy Policy.", Colors.red);
+        return;
+      }
+      final tempPassword = _generateTemporaryPassword();
       final userCredential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(email: email, password: password);
+          .createUserWithEmailAndPassword(email: email, password: tempPassword);
 
       final user = userCredential.user;
       if (user == null) {
@@ -108,6 +128,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         "role": "user",
         "platform": "mobile",
         "verified": false,
+        // Proof of acceptance
+        "accepted_tos": true,
+        "accepted_tos_version": _tosVersion,
+        "accepted_tos_at": FieldValue.serverTimestamp(),
+        "accepted_privacy_version": _privacyVersion,
+        "accepted_privacy_at": FieldValue.serverTimestamp(),
         "createdAt": FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -168,6 +194,147 @@ showDialog(
     }
   }
 
+  Future<void> _openMapPicker() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MapPickerScreen(
+          initialAddress: _addressController.text,
+        ),
+      ),
+    );
+
+    if (result != null && result is Map<String, dynamic>) {
+      _addressController.text = (result["address"] ?? '').toString();
+      selectedLat = (result["lat"] as num?)?.toDouble();
+      selectedLng = (result["lng"] as num?)?.toDouble();
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+
+  Future<void> _useCurrentLocationForAddress() async {
+    if (_isResolvingCurrentLocation) return;
+
+    if (mounted) {
+      setState(() {
+        _isResolvingCurrentLocation = true;
+      });
+    }
+
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        _showSnackBar("Location services are disabled.", Colors.red);
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _showSnackBar("Location permission is required.", Colors.red);
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      String resolvedAddress =
+          'Lat ${position.latitude.toStringAsFixed(6)}, Lng ${position.longitude.toStringAsFixed(6)}';
+
+      try {
+        final placemarks = await placemarkFromCoordinates(
+          position.latitude,
+          position.longitude,
+        );
+        if (placemarks.isNotEmpty) {
+          final p = placemarks.first;
+          final parts = [
+            p.name,
+            p.street,
+            p.subLocality,
+            p.locality,
+            p.administrativeArea,
+            p.postalCode,
+          ]
+              .where((part) => part != null && part!.trim().isNotEmpty)
+              .cast<String>()
+              .toList();
+          if (parts.isNotEmpty) {
+            resolvedAddress = parts.join(', ');
+          }
+        }
+      } catch (_) {
+        // Keep coordinates fallback if reverse geocoding fails.
+      }
+
+      _addressController.text = resolvedAddress;
+      selectedLat = position.latitude;
+      selectedLng = position.longitude;
+      _showSnackBar("Current location applied to address.", Colors.green);
+    } catch (e) {
+      _showSnackBar("Unable to use current location: $e", Colors.red);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResolvingCurrentLocation = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _maybeShowTutorial() async {
+    final prefs = await SharedPreferences.getInstance();
+    final shown = prefs.getBool(_registerTutorialShownKey) ?? false;
+    if (shown || !mounted) return;
+
+    await _showTutorialModal();
+    await prefs.setBool(_registerTutorialShownKey, true);
+  }
+
+  Future<void> _showTutorialModal() async {
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Quick Registration Guide'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('1. Enter your full name (letters and spaces only).'),
+            SizedBox(height: 8),
+            Text('2. Tap the map/search icon to pick an address.'),
+            SizedBox(height: 8),
+            Text('3. Use the location icon to auto-fill your current address.'),
+            SizedBox(height: 8),
+            Text('4. Verify email, then set your password on next screen.'),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFA30000),
+            ),
+            child: const Text(
+              'Got it',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -203,6 +370,10 @@ showDialog(
                     // Name
                     TextField(
                       controller: _nameController,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z\s]')),
+                      ],
+                      textCapitalization: TextCapitalization.words,
                       decoration: _input("Full Name"),
                     ),
                     const SizedBox(height: 20),
@@ -226,51 +397,109 @@ showDialog(
                       controller: _addressController,
                       readOnly: true,
                       decoration: _input("Pick Address (Tap to open map)").copyWith(
-                        suffixIcon: const Icon(Icons.map),
+                        suffixIcon: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.search),
+                              tooltip: 'Search address on map',
+                              onPressed: _openMapPicker,
+                            ),
+                            IconButton(
+                              icon: _isResolvingCurrentLocation
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.my_location),
+                              tooltip: 'Use current location',
+                              onPressed: _isResolvingCurrentLocation
+                                  ? null
+                                  : _useCurrentLocationForAddress,
+                            ),
+                          ],
+                        ),
                       ),
-                      onTap: () async {
-                        final result = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => MapPickerScreen(
-                              initialAddress: _addressController.text,
+                      onTap: _openMapPicker,
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: _showTutorialModal,
+                        icon: const Icon(Icons.play_circle_outline),
+                        label: const Text("View quick guide"),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Checkbox(
+                          value: _acceptedTerms,
+                          onChanged: (v) {
+                            setState(() {
+                              _acceptedTerms = v ?? false;
+                            });
+                          },
+                        ),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _acceptedTerms = !_acceptedTerms;
+                              });
+                            },
+                            child: RichText(
+                              text: TextSpan(
+                                style: const TextStyle(color: Colors.black87),
+                                children: [
+                                  const TextSpan(text: 'I agree to the '),
+                                  TextSpan(
+                                    text: 'Terms of Service',
+                                    style: const TextStyle(color: Color(0xFFA30000), decoration: TextDecoration.underline),
+                                    recognizer: TapGestureRecognizer()
+                                      ..onTap = () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(builder: (_) => const TermsScreen()),
+                                        );
+                                      },
+                                  ),
+                                  const TextSpan(text: ' and '),
+                                  TextSpan(
+                                    text: 'Privacy Policy',
+                                    style: const TextStyle(color: Color(0xFFA30000), decoration: TextDecoration.underline),
+                                    recognizer: TapGestureRecognizer()
+                                      ..onTap = () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(builder: (_) => const PrivacyScreen()),
+                                        );
+                                      },
+                                  ),
+                                  const TextSpan(text: '.'),
+                                ],
+                              ),
                             ),
                           ),
-                        );
-
-                        if (result != null && result is Map<String, dynamic>) {
-                          _addressController.text = result["address"];
-                          selectedLat = result["lat"];
-                          selectedLng = result["lng"];
-                        }
-                      },
+                        ),
+                      ],
                     ),
 
-                    const SizedBox(height: 20),
-
-                    // Password
-                    TextField(
-                      controller: _passwordController,
-                      obscureText: true,
-                      decoration: _input("Password"),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    // Confirm Password
-                    TextField(
-                      controller: _confirmPasswordController,
-                      obscureText: true,
-                      decoration: _input("Confirm Password"),
-                    ),
-
+                    const SizedBox(height: 10),
                     const SizedBox(height: 30),
 
                     SizedBox(
                       width: double.infinity,
                       height: 48,
                       child: ElevatedButton(
-                        onPressed: _register,
+                        onPressed: _acceptedTerms ? _register : null,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFA30000),
                         ),
@@ -300,5 +529,10 @@ showDialog(
         borderRadius: BorderRadius.circular(10),
       ),
     );
+  }
+
+  String _generateTemporaryPassword() {
+    final micros = DateTime.now().microsecondsSinceEpoch;
+    return 'ApulaTmp!${micros.toRadixString(36)}';
   }
 }

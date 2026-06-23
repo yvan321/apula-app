@@ -1,7 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:workmanager/workmanager.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'background_ai_task.dart';
 import 'foreground_ai_service.dart';
 
@@ -9,39 +9,11 @@ class BackgroundAIManager {
   static const String periodicTaskName = "periodicAITask";
   static const String foregroundTaskName = "foregroundAIService";
 
-  static Future<bool> hasLinkedCameras() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return false;
-
-    final byUid = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-
-    if (byUid.exists) {
-      final data = byUid.data() ?? <String, dynamic>{};
-      final cameraIds = data['cameraIds'];
-      if (cameraIds is List && cameraIds.isNotEmpty) return true;
-    }
-
-    final byEmail = await FirebaseFirestore.instance
-        .collection('users')
-        .where('email', isEqualTo: user.email)
-        .limit(1)
-        .get();
-
-    if (byEmail.docs.isEmpty) return false;
-
-    final data = byEmail.docs.first.data();
-    final cameraIds = data['cameraIds'];
-    return cameraIds is List && cameraIds.isNotEmpty;
-  }
-
   /// Initialize WorkManager (call once at app startup)
   static Future<void> initWorkManager() async {
     await Workmanager().initialize(
       callbackDispatcher,
-      isInDebugMode: true, // Set to false in production
+      isInDebugMode: false,
     );
   }
 
@@ -50,9 +22,15 @@ class BackgroundAIManager {
   static Future<bool> startPeriodicTask({
     Duration frequency = const Duration(minutes: 15),
   }) async {
-    if (!await hasLinkedCameras()) {
-      print('⚠️ Skipping periodic AI task: no linked cameras for current user.');
+    final hasCameras = await hasLinkedCameras();
+    if (!hasCameras) {
+      print('⚠️ No linked cameras found. Skipping periodic task start.');
       return false;
+    }
+
+    // Arbitration: periodic and foreground writers must not run together.
+    if (await FlutterForegroundTask.isRunningService) {
+      await stopForegroundService();
     }
 
     await Workmanager().registerPeriodicTask(
@@ -89,8 +67,8 @@ class BackgroundAIManager {
       ),
       foregroundTaskOptions: ForegroundTaskOptions(
         eventAction: ForegroundTaskEventAction.repeat(5000),
-        autoRunOnBoot: false,
-        autoRunOnMyPackageReplaced: false,
+        autoRunOnBoot: true,
+        autoRunOnMyPackageReplaced: true,
         allowWakeLock: true,
         allowWifiLock: true,
       ),
@@ -100,19 +78,18 @@ class BackgroundAIManager {
   /// Start foreground service (continuous monitoring)
   /// Shows persistent notification, runs continuously
   static Future<bool> startForegroundService() async {
-    if (!await hasLinkedCameras()) {
-      print('⚠️ Skipping foreground AI service: no linked cameras for current user.');
-      return false;
-    }
-
     if (await FlutterForegroundTask.isRunningService) {
       return true;
     }
 
-    // Request permissions
-    if (!await FlutterForegroundTask.canDrawOverlays) {
-      await FlutterForegroundTask.openSystemAlertWindowSettings();
+    final hasCameras = await hasLinkedCameras();
+    if (!hasCameras) {
+      print('⚠️ No linked cameras found. Foreground service not started.');
+      return false;
     }
+
+    // Arbitration: foreground and periodic writers must not run together.
+    await stopPeriodicTask();
 
     if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
       await FlutterForegroundTask.requestIgnoreBatteryOptimization();
@@ -148,6 +125,32 @@ class BackgroundAIManager {
   /// Check if foreground service is running
   static Future<bool> isForegroundServiceRunning() async {
     return await FlutterForegroundTask.isRunningService;
+  }
+
+  static Future<bool> hasLinkedCameras() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null || user.email == null) {
+        return false;
+      }
+
+      final query = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: user.email)
+          .limit(1)
+          .get();
+
+      if (query.docs.isEmpty) {
+        return false;
+      }
+
+      final data = query.docs.first.data();
+      final cameraIds = data['cameraIds'];
+      return cameraIds is List && cameraIds.isNotEmpty;
+    } catch (e) {
+      print('❌ Failed to check linked cameras: $e');
+      return false;
+    }
   }
 }
 

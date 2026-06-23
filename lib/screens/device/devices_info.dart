@@ -12,6 +12,7 @@ class DevicesInfoScreen extends StatefulWidget {
 class _DevicesInfoScreenState extends State<DevicesInfoScreen> {
   List<String> devices = [];
   bool loading = true;
+  static final RegExp _cameraIdPattern = RegExp(r'^cam_\d{2,}$');
 
   @override
   void initState() {
@@ -56,6 +57,17 @@ class _DevicesInfoScreenState extends State<DevicesInfoScreen> {
 
   Future<void> _addScannedDevice(String cameraId) async {
     try {
+      final normalizedCameraId = cameraId.trim();
+      if (!_cameraIdPattern.hasMatch(normalizedCameraId)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid camera ID format. Use cam_01 style IDs.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
 
@@ -70,15 +82,15 @@ class _DevicesInfoScreenState extends State<DevicesInfoScreen> {
         final docRef = query.docs.first.reference;
         
         // Add camera ID if not already in list
-        if (!devices.contains(cameraId)) {
-          devices.add(cameraId);
+        if (!devices.contains(normalizedCameraId)) {
+          devices.add(normalizedCameraId);
           await docRef.update({
-            'cameraIds': FieldValue.arrayUnion([cameraId])
+            'cameraIds': FieldValue.arrayUnion([normalizedCameraId])
           });
           
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Camera $cameraId added!'),
+              content: Text('Camera $normalizedCameraId added!'),
               backgroundColor: Colors.green,
             ),
           );

@@ -6,13 +6,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
+import 'package:lottie/lottie.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-// app imports — adjust paths if needed
+// app imports
 import 'package:apula/main.dart'; // provides yoloFirebaseApp
 import 'package:apula/widgets/custom_bottom_nav.dart';
-import 'package:apula/screens/app/live/livefootage_page.dart';
+import 'package:apula/widgets/global_manual_alert_button.dart';
 import 'package:apula/services/cnn_listener_service.dart';
-import 'package:apula/services/global_alert_handler.dart';
 import 'package:apula/utils/sensor_pairing_helper.dart';
 import 'package:apula/utils/app_palette.dart';
 
@@ -51,9 +53,10 @@ class _HomePageState extends State<HomePage>
   final PageController _chartPageController = PageController();
   int _currentChartPage = 0;
 
-  final List<Map<String, String>> recentActivities = [];
-
+  static List<Map<String, dynamic>> _persistedActivities = [];
+  List<Map<String, dynamic>> recentActivities = [];
   StreamSubscription<DatabaseEvent>? _sensorSub;
+  late final CnnCallback _homeCnnCallback;
 
   static const double THRESH_PRE_FIRE = 0.20;
   static const double THRESH_SMOLDERING = 0.40;
@@ -66,17 +69,16 @@ class _HomePageState extends State<HomePage>
   final Map<String, DateTime> _lastHistoryWritePerCamera = {};
 
   List<String> _availableDevices = [];
-
-  final List<String> _titles = [
-    'APULA',
-    'Live Footage',
-    'Notifications',
-    'Settings',
-  ];
+  String? _selectedSimulationCameraId;
+  String? _mainStatusCameraId;
+  bool _guideDialogOpen = false;
 
   @override
   void initState() {
     super.initState();
+
+    _homeCnnCallback = _handleCnnUpdate;
+
     _skyAnimController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 10),
@@ -86,8 +88,170 @@ class _HomePageState extends State<HomePage>
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
 
     _loadDevices();
-    _loadRecentActivitiesFromFirestore();
     _startDatabaseListeners();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeShowAppGuide();
+    });
+
+    recentActivities = List<Map<String, dynamic>>.from(_persistedActivities);
+  }
+
+  Future<void> _maybeShowAppGuide() async {
+    if (!mounted || _guideDialogOpen) return;
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'app_guide_shown_${user.uid}';
+    final shown = prefs.getBool(key) ?? false;
+    if (shown) return;
+
+    _guideDialogOpen = true;
+    await _showAppGuideModal();
+    await prefs.setBool(key, true);
+    _guideDialogOpen = false;
+  }
+
+  Future<void> _showAppGuideModal() async {
+    if (!mounted) return;
+
+    final primary = Theme.of(context).colorScheme.primary;
+    final pages = <Map<String, String>>[
+      {
+        'title': 'Home',
+        'body': 'See your live system status, weather, temperature, and AI prediction summaries at a glance.',
+      },
+      {
+        'title': 'Live + Alerts',
+        'body': 'Open live CCTV and thermal feeds in Live. Review and manage incident alerts in Alerts.',
+      },
+      {
+        'title': 'Settings + Safety',
+        'body': 'Update your account, notification settings, and background monitoring. Use Emergency Alert if needed.',
+      },
+    ];
+    final controller = PageController();
+    int currentPage = 0;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              title: const Text('Welcome to APULA'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      height: 130,
+                      width: double.infinity,
+                      child: Lottie.asset('assets/fireloading.json', repeat: true),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 190,
+                      child: PageView.builder(
+                        controller: controller,
+                        onPageChanged: (index) {
+                          setModalState(() {
+                            currentPage = index;
+                          });
+                        },
+                        itemCount: pages.length,
+                        itemBuilder: (context, index) {
+                          final page = pages[index];
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  page['title']!,
+                                  style: const TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  page['body']!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(fontSize: 15, height: 1.5),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(pages.length, (index) {
+                        final selected = index == currentPage;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          width: selected ? 18 : 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: selected ? primary : Colors.grey.shade400,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Swipe to continue',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: currentPage > 0
+                      ? () {
+                          controller.previousPage(
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeOut,
+                          );
+                        }
+                      : null,
+                  child: const Text('Back'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (currentPage < pages.length - 1) {
+                      controller.nextPage(
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeOut,
+                      );
+                    } else {
+                      Navigator.pop(dialogContext);
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: primary),
+                  child: Text(
+                    currentPage < pages.length - 1 ? 'Next' : 'Start',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
   }
 
   Future<void> _loadDevices() async {
@@ -109,6 +273,14 @@ class _HomePageState extends State<HomePage>
         if (cameraIds != null && mounted) {
           setState(() {
             _availableDevices = List<String>.from(cameraIds);
+            if (_availableDevices.isNotEmpty) {
+              if (_selectedSimulationCameraId == null ||
+                  !_availableDevices.contains(_selectedSimulationCameraId)) {
+                _selectedSimulationCameraId = _availableDevices.first;
+              }
+            } else {
+              _selectedSimulationCameraId = null;
+            }
 
             for (final cameraId in _availableDevices) {
               severityHistoryPerCamera[cameraId] = [];
@@ -122,14 +294,54 @@ class _HomePageState extends State<HomePage>
             _loadSensorStatus(cameraId);
           }
 
-          await Future.wait(_availableDevices.map(_loadHistoryForCamera));
-
           _startCnnListener();
         }
       }
     } catch (e) {
       debugPrint('Error loading devices: $e');
     }
+  }
+
+  Future<void> _restoreMainStatusCameraSelection() async {
+    if (_availableDevices.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _mainStatusCameraId = null;
+        });
+      }
+      return;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (mounted) {
+        setState(() {
+          _mainStatusCameraId = _availableDevices.first;
+        });
+      }
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'home_main_camera_${user.uid}';
+    final saved = prefs.getString(key);
+
+    final selected = (saved != null && _availableDevices.contains(saved))
+        ? saved
+        : _availableDevices.first;
+
+    if (!mounted) return;
+    setState(() {
+      _mainStatusCameraId = selected;
+    });
+  }
+
+  Future<void> _saveMainStatusCameraSelection(String cameraId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('home_main_camera_${user.uid}', cameraId);
   }
 
   Future<void> _loadSensorStatus(String cameraId) async {
@@ -139,62 +351,6 @@ class _HomePageState extends State<HomePage>
     setState(() {
       sensorStatusPerCamera[cameraId] = status;
     });
-  }
-
-  Future<void> _loadRecentActivitiesFromFirestore() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-
-      final email = user.email;
-      if (email == null) return;
-
-      // Load last 10 alerts from Firestore
-      final snapshot = await FirebaseFirestore.instance
-          .collection('user_alerts')
-          .where('userEmail', isEqualTo: email)
-          .orderBy('timestamp', descending: true)
-          .limit(10)
-          .get();
-
-      if (!mounted) return;
-
-      setState(() {
-        recentActivities.clear();
-        for (final doc in snapshot.docs) {
-          final data = doc.data();
-          final timestamp = data['timestamp'] as Timestamp?;
-          final timeAgo = timestamp != null
-              ? _formatTimeAgo(timestamp.toDate())
-              : 'Unknown time';
-
-          recentActivities.add({
-            'title': data['deviceName'] ?? data['device'] ?? 'Fire Alert',
-            'time': timeAgo,
-            'image': data['snapshotUrl'] ?? '',
-          });
-        }
-      });
-    } catch (e) {
-      debugPrint('Error loading recent activities: $e');
-    }
-  }
-
-  String _formatTimeAgo(DateTime timestamp) {
-    final now = DateTime.now();
-    final diff = now.difference(timestamp);
-
-    if (diff.inMinutes < 1) {
-      return 'Just now';
-    } else if (diff.inMinutes < 60) {
-      return '${diff.inMinutes}m ago';
-    } else if (diff.inHours < 24) {
-      return '${diff.inHours}h ago';
-    } else if (diff.inDays < 7) {
-      return '${diff.inDays}d ago';
-    } else {
-      return '${(diff.inDays / 7).floor()}w ago';
-    }
   }
 
   void _updateTime() {
@@ -208,6 +364,122 @@ class _HomePageState extends State<HomePage>
           '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       _isDay = now.hour >= 6 && now.hour < 18;
     });
+  }
+
+  String _now() => DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+
+  String _formatActivityTime(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${dt.month}/${dt.day}/${dt.year}';
+  }
+
+  String _resolveSimulationCameraId([String? preferredCameraId]) {
+    final preferred = preferredCameraId?.trim();
+    if (preferred != null && preferred.isNotEmpty) {
+      return preferred;
+    }
+
+    if (_selectedSimulationCameraId != null &&
+        _selectedSimulationCameraId!.isNotEmpty) {
+      return _selectedSimulationCameraId!;
+    }
+
+    if (_availableDevices.isNotEmpty) {
+      return _availableDevices[
+          _currentChartPage.clamp(0, _availableDevices.length - 1)];
+    }
+
+    return 'cam_01';
+  }
+
+  Future<void> _simulateNormal({String? cameraId}) async {
+    final targetCameraId = _resolveSimulationCameraId(cameraId);
+
+    final entry = {
+      "DHT_Temp": 30,
+      "DHT_Humidity": 60,
+      "MQ2_Value": 80,
+      "Flame_Det": 0,
+      "timestamp": _now(),
+    };
+
+    try {
+      await FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
+          .ref("sensor_data/$targetCameraId/latest")
+          .set(entry);
+
+      if (!mounted) return;
+
+      setState(() {
+        _roomTemp = 30;
+        _fireDetected = 0;
+        _smokeDetected = 0;
+      });
+
+      _addActivity(
+        '$targetCameraId: Normal simulation sent',
+        _formatActivityTime(DateTime.now()),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Normal data sent to $targetCameraId')),
+      );
+    } catch (e) {
+      debugPrint('Error sending normal simulation: $e');
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send normal simulation: $e')),
+      );
+    }
+  }
+
+  Future<void> _simulateIgnition({String? cameraId}) async {
+    final targetCameraId = _resolveSimulationCameraId(cameraId);
+
+    final entry = {
+      "DHT_Temp": 48,
+      "DHT_Humidity": 35,
+      "MQ2_Value": 1300,
+      "Flame_Det": 1,
+      "timestamp": _now(),
+    };
+
+    try {
+      await FirebaseDatabase.instanceFor(app: yoloFirebaseApp)
+          .ref("sensor_data/$targetCameraId/latest")
+          .set(entry);
+
+      if (!mounted) return;
+
+      setState(() {
+        _roomTemp = 48;
+        _fireDetected = 1;
+        _smokeDetected = 0;
+      });
+
+      _addActivity(
+        '$targetCameraId: Ignition simulation sent',
+        _formatActivityTime(DateTime.now()),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ignition data sent to $targetCameraId')),
+      );
+    } catch (e) {
+      debugPrint('Error sending ignition simulation: $e');
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send ignition simulation: $e')),
+      );
+    }
   }
 
   void _startDatabaseListeners() {
@@ -241,75 +513,42 @@ class _HomePageState extends State<HomePage>
   void _startCnnListener() {
     if (_availableDevices.isEmpty) return;
 
-    CnnListenerService.startListening(
-      _availableDevices,
-      (cameraId, alert, severity, snapshotUrl, dominantSource) {
-        _persistHistoryIfNeeded(cameraId, alert, severity, snapshotUrl);
+    CnnListenerService.startListening(_availableDevices, _homeCnnCallback);
+  }
 
-        GlobalAlertHandler.showFireModal(
-          alert: alert,
-          severity: severity,
-          snapshotUrl: snapshotUrl,
-          deviceName: cameraId,
-          dominantSource: dominantSource,
-        );
+  void _handleCnnUpdate(
+    String cameraId,
+    double alert,
+    double severity,
+    String snapshotUrl,
+    String dominantSource,
+  ) {
+    if (!mounted) return;
 
-        if (!mounted) return;
+    setState(() {
+      // Keep Home callback lightweight to avoid impacting modal responsiveness.
+      severityHistoryPerCamera[cameraId] = <double>[severity];
+      alertHistoryPerCamera[cameraId] = <double>[alert];
+      historyTimestampsPerCamera[cameraId] = <DateTime>[DateTime.now()];
 
-        setState(() {
-          severityHistoryPerCamera.putIfAbsent(cameraId, () => []);
-          alertHistoryPerCamera.putIfAbsent(cameraId, () => []);
-          historyTimestampsPerCamera.putIfAbsent(cameraId, () => []);
+      if (snapshotUrl.isNotEmpty) {
+        _lastSnapshotUrl = snapshotUrl;
+      }
 
-          severityHistoryPerCamera[cameraId]!.add(severity);
-          alertHistoryPerCamera[cameraId]!.add(alert);
-          historyTimestampsPerCamera[cameraId]!.add(DateTime.now());
-
-          if (severityHistoryPerCamera[cameraId]!.length > historyMaxPoints) {
-            severityHistoryPerCamera[cameraId]!.removeAt(0);
-          }
-          if (alertHistoryPerCamera[cameraId]!.length > historyMaxPoints) {
-            alertHistoryPerCamera[cameraId]!.removeAt(0);
-          }
-          if (historyTimestampsPerCamera[cameraId]!.length > historyMaxPoints) {
-            historyTimestampsPerCamera[cameraId]!.removeAt(0);
-          }
-
-          if (snapshotUrl.isNotEmpty) {
-            _lastSnapshotUrl = snapshotUrl;
-          }
-
-          if (severity >= THRESH_DEVELOPING && alert >= 0.80) {
-            _fireDetected = 1;
-            _smokeDetected = 0;
-            _addActivity(
-              '$cameraId: Extreme fire danger',
-              'just now',
-              imageUrl: snapshotUrl,
-            );
-          } else if (severity >= THRESH_IGNITION && alert >= 0.75) {
-            _fireDetected = 1;
-            _smokeDetected = 0;
-            _addActivity(
-              '$cameraId: Ignition anomaly',
-              'just now',
-              imageUrl: snapshotUrl,
-            );
-          } else if (severity >= THRESH_SMOLDERING && alert >= 0.73) {
-            _fireDetected = 0;
-            _smokeDetected = 1;
-            _addActivity(
-              '$cameraId: Fire-like activity',
-              'just now',
-              imageUrl: snapshotUrl,
-            );
-          } else {
-            _fireDetected = 0;
-            _smokeDetected = 0;
-          }
-        });
-      },
-    );
+      if (severity >= THRESH_DEVELOPING && alert >= 0.80) {
+        _fireDetected = 1;
+        _smokeDetected = 0;
+      } else if (severity >= THRESH_IGNITION && alert >= 0.75) {
+        _fireDetected = 1;
+        _smokeDetected = 0;
+      } else if (severity >= THRESH_SMOLDERING && alert >= 0.73) {
+        _fireDetected = 0;
+        _smokeDetected = 1;
+      } else {
+        _fireDetected = 0;
+        _smokeDetected = 0;
+      }
+    });
   }
 
   void _addActivity(String title, String timeAgo, {String imageUrl = ''}) {
@@ -324,6 +563,7 @@ class _HomePageState extends State<HomePage>
       if (recentActivities.length > 6) {
         recentActivities.removeLast();
       }
+      _persistedActivities = List<Map<String, dynamic>>.from(recentActivities);
     });
   }
 
@@ -731,8 +971,8 @@ class _HomePageState extends State<HomePage>
     final isCloudy = condition == WeatherVisual.cloudy;
 
     return Container(
-      constraints: const BoxConstraints(minHeight: 200),
-      padding: const EdgeInsets.all(16),
+      height: double.infinity,
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -764,7 +1004,7 @@ class _HomePageState extends State<HomePage>
                   right: 20 + drift,
                   child: Icon(
                     Icons.cloud,
-                    size: 36,
+                    size: 38,
                     color: Colors.white.withOpacity(0.55),
                   ),
                 ),
@@ -773,7 +1013,7 @@ class _HomePageState extends State<HomePage>
                   right: 56 + (drift * 0.7),
                   child: Icon(
                     Icons.cloud,
-                    size: 26,
+                    size: 28,
                     color: Colors.white.withOpacity(0.40),
                   ),
                 ),
@@ -798,44 +1038,42 @@ class _HomePageState extends State<HomePage>
                 ),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        _isDay
-                            ? (isCloudy
-                                ? Icons.wb_cloudy
-                                : (isRainy ? Icons.grain : Icons.wb_sunny))
-                            : (isRainy
-                                ? Icons.grain
-                                : Icons.nightlight_round),
-                        color: Colors.white,
-                        size: 30,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _time,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _date,
-                        style: const TextStyle(fontSize: 14, color: Colors.white70),
-                      ),
-                    ],
+                  Icon(
+                    _isDay
+                        ? (isCloudy
+                            ? Icons.wb_cloudy
+                            : (isRainy ? Icons.grain : Icons.wb_sunny))
+                        : (isRainy ? Icons.grain : Icons.nightlight_round),
+                    color: Colors.white,
+                    size: 36,
                   ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _time,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _date,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
                   Text(
                     _weatherLabel(condition),
                     style: const TextStyle(
-                      fontSize: 13,
-                      color: Colors.white70,
-                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
@@ -861,30 +1099,68 @@ class _HomePageState extends State<HomePage>
             children: [
               const Text(
                 'CNN Test Controls',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.local_fire_department),
-                label: const Text('Simulate Fire Alert'),
-                onPressed: () {
-                  Navigator.pop(context);
-                },
-              ),
-              const SizedBox(height: 10),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.cloud),
-                label: const Text('Simulate Smoke Alert'),
-                onPressed: () {
-                  Navigator.pop(context);
-                },
-              ),
-              const SizedBox(height: 10),
+              if (_availableDevices.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF202020),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _availableDevices.contains(_selectedSimulationCameraId)
+                          ? _selectedSimulationCameraId
+                          : _availableDevices.first,
+                      dropdownColor: const Color(0xFF202020),
+                      iconEnabledColor: Colors.white,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      isExpanded: true,
+                      items: _availableDevices
+                          .map(
+                            (cameraId) => DropdownMenuItem<String>(
+                              value: cameraId,
+                              child: Text('Simulate: ${cameraId.toUpperCase()}'),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _selectedSimulationCameraId = value;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 16),
               ElevatedButton.icon(
                 icon: const Icon(Icons.check_circle),
                 label: const Text('Simulate Normal'),
-                onPressed: () {
-                  Navigator.pop(context);
+                onPressed: () async {
+                  await _simulateNormal(
+                    cameraId: _selectedSimulationCameraId,
+                  );
+                  if (context.mounted) Navigator.pop(context);
+                },
+              ),
+              const SizedBox(height: 10),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.local_fire_department),
+                label: const Text('Simulate Fire Caution'),
+                onPressed: () async {
+                  await _simulateIgnition(
+                    cameraId: _selectedSimulationCameraId,
+                  );
+                  if (context.mounted) Navigator.pop(context);
                 },
               ),
             ],
@@ -894,101 +1170,96 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Widget _buildTemperatureCard() {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 200),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: _roomTemp >= 30
-              ? [AppPalette.secondaryWarm, AppPalette.primaryFire]
-              : [Colors.blue.shade400, Colors.blue.shade700],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+  Widget _tempActionButton({
+    required String title,
+    required Color color,
+    required Future<void> Function() onPressed,
+  }) {
+    return Expanded(
+      child: SizedBox(
+        height: 42,
+        child: ElevatedButton(
+          onPressed: () async {
+            await onPressed();
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: color,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            textStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: (_roomTemp >= 30
-                    ? AppPalette.secondaryWarm
-                    : Colors.blue)
-                .withOpacity(0.35),
-            blurRadius: 12,
-            offset: const Offset(0, 5),
-          ),
-        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
-            children: [
-              const Icon(Icons.thermostat, color: Colors.white, size: 28),
-              const SizedBox(height: 8),
-              Text(
-                '$_roomTemp°C',
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'Room Temp',
-                style: TextStyle(fontSize: 14, color: Colors.white70),
-              ),
-            ],
+    );
+  }
+
+  Widget _buildTemperatureCard() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: _showCnnTestModal,
+      child: Container(
+        height: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: _roomTemp >= 30
+                ? [AppPalette.secondaryWarm, AppPalette.primaryFire]
+                : [Colors.blue.shade400, Colors.blue.shade700],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-          const SizedBox(height: 16),
-          // Buttons row
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
-            children: [
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Increase'),
-                onPressed: () {
-                  setState(() {
-                    _roomTemp = (_roomTemp + 1).clamp(0, 50);
-                  });
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white24,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: (_roomTemp >= 30
+                      ? AppPalette.secondaryWarm
+                      : Colors.blue)
+                  .withOpacity(0.35),
+              blurRadius: 12,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.thermostat,
+              color: Colors.white,
+              size: 38,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '$_roomTemp°C',
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
               ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.remove, size: 16),
-                label: const Text('Decrease'),
-                onPressed: () {
-                  setState(() {
-                    _roomTemp = (_roomTemp - 1).clamp(0, 50);
-                  });
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white24,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Room Temperature',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                color: Colors.white70,
+                fontWeight: FontWeight.w600,
               ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.info, size: 16),
-                label: const Text('Details'),
-                onPressed: _showCnnTestModal,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white24,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                ),
-              ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -998,14 +1269,18 @@ class _HomePageState extends State<HomePage>
       children: [
         Text(
           label,
-          style: const TextStyle(color: Colors.white70, fontSize: 11),
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 8),
         Text(
           value.toStringAsFixed(3),
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 16,
+            fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -1013,18 +1288,138 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  Widget _buildMainPredictionPill(String label, double value) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.16),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              value.toStringAsFixed(3),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainPredictionSummary() {
+    if (_availableDevices.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 8),
+        child: Text(
+          'No camera available for prediction summary.',
+          style: TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+      );
+    }
+
+    final selected = (_mainStatusCameraId != null &&
+            _availableDevices.contains(_mainStatusCameraId))
+        ? _mainStatusCameraId!
+        : _availableDevices.first;
+
+    final severity = (severityHistoryPerCamera[selected] ?? const <double>[]).isEmpty
+        ? 0.0
+        : severityHistoryPerCamera[selected]!.last;
+
+    final alert = (alertHistoryPerCamera[selected] ?? const <double>[]).isEmpty
+        ? 0.0
+        : alertHistoryPerCamera[selected]!.last;
+
+    return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Main Camera Prediction',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.16),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: selected,
+                isExpanded: true,
+                dropdownColor: const Color(0xFF2C2C2C),
+                iconEnabledColor: Colors.white,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+                items: _availableDevices
+                    .map(
+                      (cameraId) => DropdownMenuItem<String>(
+                        value: cameraId,
+                        child: Text(cameraId.toUpperCase()),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) async {
+                  if (value == null) return;
+                  setState(() {
+                    _mainStatusCameraId = value;
+                  });
+                  await _saveMainStatusCameraSelection(value);
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _buildMainPredictionPill('Severity', severity),
+              const SizedBox(width: 8),
+              _buildMainPredictionPill('Alert', alert),
+            ],
+          ),
+        ],
+    );
+  }
+
   Widget _buildMiniCnnBox() {
     if (_availableDevices.isEmpty) {
       return Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: Colors.black87,
           borderRadius: BorderRadius.circular(12),
         ),
         child: const Text(
           'No cameras available',
-          style: TextStyle(color: Colors.white70),
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+          ),
           textAlign: TextAlign.center,
         ),
       );
@@ -1044,7 +1439,7 @@ class _HomePageState extends State<HomePage>
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.black87,
         borderRadius: BorderRadius.circular(12),
@@ -1058,14 +1453,21 @@ class _HomePageState extends State<HomePage>
               fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Severity: ${latestSeverity.toStringAsFixed(3)}\nAlert: ${latestAlert.toStringAsFixed(3)}',
-            style: const TextStyle(color: Colors.white),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildMetricTag('Severity', latestSeverity),
+              Container(
+                width: 1,
+                height: 42,
+                color: Colors.white24,
+              ),
+              _buildMetricTag('Alert', latestAlert),
+            ],
+          ),
         ],
       ),
     );
@@ -1086,8 +1488,14 @@ class _HomePageState extends State<HomePage>
                   )
                 : const Icon(Icons.image, color: Colors.white54))
             : const Icon(Icons.check_circle, color: Colors.green),
-        title: Text(title, style: const TextStyle(color: Colors.white)),
-        subtitle: Text(time, style: const TextStyle(color: Colors.white70)),
+        title: Text(
+          title,
+          style: const TextStyle(color: Colors.white, fontSize: 12),
+        ),
+        subtitle: Text(
+          time,
+          style: const TextStyle(color: Colors.white70, fontSize: 10),
+        ),
       ),
     );
   }
@@ -1109,7 +1517,7 @@ class _HomePageState extends State<HomePage>
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Colors.black87,
               borderRadius: BorderRadius.circular(12),
@@ -1123,36 +1531,37 @@ class _HomePageState extends State<HomePage>
                     const Icon(
                       Icons.videocam,
                       color: Color(0xFFA30000),
-                      size: 24,
+                      size: 28,
                     ),
                     const SizedBox(width: 8),
                     Text(
                       cameraId.toUpperCase(),
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 18,
+                        fontSize: 22,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 Row(
                   children: [
-                    const Icon(Icons.sensors, color: Colors.white70, size: 16),
+                    const Icon(Icons.sensors, color: Colors.white70, size: 20),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         sensorStatus,
                         style: const TextStyle(
                           color: Colors.white70,
-                          fontSize: 12,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 14),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
@@ -1170,7 +1579,10 @@ class _HomePageState extends State<HomePage>
             children: ChartRange.values.map((range) {
               final selected = _selectedChartRange == range;
               return ChoiceChip(
-                label: Text(_chartRangeLabel(range)),
+                label: Text(
+                  _chartRangeLabel(range),
+                  style: const TextStyle(fontSize: 13),
+                ),
                 selected: selected,
                 onSelected: (_) {
                   setState(() {
@@ -1183,14 +1595,14 @@ class _HomePageState extends State<HomePage>
           const SizedBox(height: 12),
           const Text(
             'Fire Prediction (Severity)',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           buildSeverityChart(cameraId),
           const SizedBox(height: 20),
           const Text(
             'Alert Prediction',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           buildAlertChart(cameraId),
@@ -1211,7 +1623,7 @@ class _HomePageState extends State<HomePage>
     _skyAnimController.dispose();
     _sensorSub?.cancel();
     _chartPageController.dispose();
-    CnnListenerService.stopAll();
+    CnnListenerService.removeCallbacks(_availableDevices, _homeCnnCallback);
     super.dispose();
   }
 
@@ -1237,165 +1649,99 @@ class _HomePageState extends State<HomePage>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_titles[_selectedIndex]),
+        automaticallyImplyLeading: false,
+        title: const Text('APULA'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'How this page works',
+            onPressed: _showAppGuideModal,
+            icon: const Icon(Icons.info_outline),
+          ),
+        ],
       ),
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: [
-          SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Prevention Starts with Detection',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: statusColor,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: statusColor.withOpacity(0.35),
-                        blurRadius: 12,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Prevention Starts with Detection',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: statusColor,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: statusColor.withOpacity(0.35),
+                    blurRadius: 12,
+                    offset: const Offset(0, 5),
                   ),
-                  child: Row(
-                    children: [
-                      Icon(statusIcon, color: Colors.white, size: 40),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          statusText,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                          ),
-                        ),
+                ],
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Icon(statusIcon, color: Colors.white, size: 40),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      statusText,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
                       ),
-                      const SizedBox(width: 8),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            _time,
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _date,
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                        ],
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(child: _buildTimeWeatherCard()),
-                    const SizedBox(width: 12),
-                    Expanded(child: _buildTemperatureCard()),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 220,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _buildTimeWeatherCard()),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildTemperatureCard()),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              child: Center(
+                child: Column(
+                  children: const [
+                    Text(
+                      'Emergency Alert',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                    ),
+                    SizedBox(height: 10),
+                    GlobalManualAlertButton(
+                      inline: true,
+                      compactCircle: true,
+                      forceShowOnHome: true,
+                      compactSize: 182,
+                    ),
+                    SizedBox(height: 10),
+                    Text(
+                      'Tap to send an urgent manual panic alert.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 20),
-                _buildMiniCnnBox(),
-                const SizedBox(height: 16),
-                if (_availableDevices.isNotEmpty) ...[
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Camera Predictions',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Row(
-                        children: List.generate(
-                          _availableDevices.length,
-                          (index) => Container(
-                            margin: const EdgeInsets.symmetric(horizontal: 3),
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: _currentChartPage == index
-                                  ? const Color(0xFFA30000)
-                                  : Colors.grey,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 620,
-                    child: PageView.builder(
-                      controller: _chartPageController,
-                      onPageChanged: (index) {
-                        setState(() {
-                          _currentChartPage = index;
-                        });
-                      },
-                      itemCount: _availableDevices.length,
-                      itemBuilder: (context, index) {
-                        final cameraId = _availableDevices[index];
-                        return _buildCameraChartPage(cameraId);
-                      },
-                    ),
-                  ),
-                ] else
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child: Text(
-                        'No cameras added yet',
-                        style: TextStyle(
-                          color: Colors.white54,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Recent Activity',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 10),
-                ...recentActivities.map(
-                  (a) => _activityItem(
-                    a['title'] ?? '',
-                    a['time'] ?? '',
-                    imageUrl: a['image'] ?? '',
-                  ),
-                ),
-                if (recentActivities.isEmpty)
-                  const Text(
-                    'No recent activity',
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                const SizedBox(height: 40),
-              ],
+              ),
             ),
-          ),
-
-          LiveFootagePage(devices: _availableDevices),
-
-          const Center(child: Text('Notifications Page 🔔')),
-
-          const Center(child: Text('Settings Page ⚙️')),
-        ],
+          ],
+        ),
       ),
       bottomNavigationBar: CustomBottomNavBar(
         selectedIndex: _selectedIndex,

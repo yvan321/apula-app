@@ -260,8 +260,8 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                             TextField(
                               controller: _addressController,
                               readOnly: true,
-                              decoration: _input("Address").copyWith(
-                                suffixIcon: const Icon(Icons.map),
+                              decoration: _input("Address (Tap to search on map)").copyWith(
+                                suffixIcon: const Icon(Icons.search),
                               ),
                               onTap: () async {
                                 final result = await Navigator.push(

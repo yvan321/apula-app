@@ -42,6 +42,23 @@ class CnnListenerService {
     }
   }
 
+  static void removeCallbacks(List<String> cameraIds, CnnCallback callback) {
+    for (final cameraId in cameraIds) {
+      final callbacks = _callbacks[cameraId];
+      if (callbacks == null) continue;
+
+      callbacks.remove(callback);
+
+      if (callbacks.isEmpty) {
+        _subs[cameraId]?.cancel();
+        _subs.remove(cameraId);
+        _callbacks.remove(cameraId);
+        _states.remove(cameraId);
+        print('🛑 Stopped listening to CNN results for: $cameraId');
+      }
+    }
+  }
+
   static void _handleCameraUpdate(String cameraId, DatabaseEvent event) {
     final raw = event.snapshot.value;
     if (raw == null || raw is! Map) return;

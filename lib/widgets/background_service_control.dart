@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/background_ai_manager.dart';
+import '../utils/app_palette.dart';
 
 class BackgroundServiceControl extends StatefulWidget {
   const BackgroundServiceControl({super.key});
@@ -89,21 +90,24 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
 
   Future<void> _checkServiceStatus() async {
     final isRunning = await BackgroundAIManager.isForegroundServiceRunning();
-    final hasCameras = await BackgroundAIManager.hasLinkedCameras();
     setState(() {
       _foregroundServiceRunning = isRunning;
-      if (!hasCameras) {
-        _periodicTaskEnabled = false;
-      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final background = isDark ? AppPalette.darkBackground : AppPalette.lightBackground;
+    final cardColor = isDark ? AppPalette.darkCard : Colors.white;
+    final accent = AppPalette.secondaryWarm;
+
     return Scaffold(
+      backgroundColor: background,
       appBar: AppBar(
         title: const Text('Background AI Services'),
-        backgroundColor: const Color(0xFFA30000),
+        backgroundColor: accent,
+        foregroundColor: Colors.white,
       ),
       body: SingleChildScrollView(
         child: Padding(
@@ -114,21 +118,21 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
             // Notification Permission Warning
             if (!_notificationPermissionGranted)
               Card(
-                color: Colors.orange.shade50,
+                color: isDark ? const Color(0xFF3A2E12) : const Color(0xFFFFF8E8),
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.warning_amber, color: Colors.orange),
+                          Icon(Icons.warning_amber, color: accent),
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               'Notification Permission Required',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: Colors.orange.shade900,
+                                color: isDark ? Colors.white : Colors.black87,
                               ),
                             ),
                           ),
@@ -137,7 +141,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                       SizedBox(height: 8),
                       Text(
                         'Background services need notification permission to work. Please grant permission in settings.',
-                        style: TextStyle(color: Colors.orange.shade900),
+                        style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
                       ),
                       SizedBox(height: 8),
                       ElevatedButton.icon(
@@ -154,7 +158,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                         icon: Icon(Icons.settings),
                         label: Text('Open Settings'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange,
+                          backgroundColor: accent,
                         ),
                       ),
                     ],
@@ -165,6 +169,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
             
             // Foreground Service Card
             Card(
+              color: cardColor,
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
@@ -197,14 +202,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                         if (_foregroundServiceRunning) {
                           await BackgroundAIManager.stopForegroundService();
                         } else {
-                          final started = await BackgroundAIManager.startForegroundService();
-                          if (!started && mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Connect at least one camera first before enabling monitoring.'),
-                              ),
-                            );
-                          }
+                          await BackgroundAIManager.startForegroundService();
                         }
                         await _checkServiceStatus();
                       },
@@ -213,7 +211,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _foregroundServiceRunning
                             ? Colors.red
-                            : const Color(0xFFA30000),
+                            : accent,
                       ),
                     ),
                   ],
@@ -225,6 +223,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
 
             // Periodic Task Card
             Card(
+              color: cardColor,
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
@@ -259,34 +258,22 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('Periodic task stopped')),
                           );
-                          setState(() {
-                            _periodicTaskEnabled = false;
-                          });
                         } else {
-                          final started = await BackgroundAIManager.startPeriodicTask();
-                          if (started) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Periodic task started')),
-                            );
-                            setState(() {
-                              _periodicTaskEnabled = true;
-                            });
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Connect at least one camera first before enabling monitoring.')),
-                            );
-                            setState(() {
-                              _periodicTaskEnabled = false;
-                            });
-                          }
+                          await BackgroundAIManager.startPeriodicTask();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Periodic task started')),
+                          );
                         }
+                        setState(() {
+                          _periodicTaskEnabled = !_periodicTaskEnabled;
+                        });
                       },
                       icon: Icon(_periodicTaskEnabled ? Icons.stop : Icons.play_arrow),
                       label: Text(_periodicTaskEnabled ? 'Disable' : 'Enable'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _periodicTaskEnabled
                             ? Colors.red
-                            : const Color(0xFFA30000),
+                            : accent,
                       ),
                     ),
                   ],
@@ -302,7 +289,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
               icon: const Icon(Icons.notifications_active),
               label: const Text('Send Test Notification'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
+                backgroundColor: accent,
                 padding: const EdgeInsets.symmetric(vertical: 16),
               ),
             ),
@@ -311,7 +298,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
 
             // Status Display
             Card(
-              color: Colors.blue.shade50,
+              color: isDark ? const Color(0xFF252525) : const Color(0xFFFFF8E8),
               child: Padding(
                 padding: EdgeInsets.all(16.0),
                 child: Column(
@@ -320,6 +307,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                     Text(
                       '📊 Service Status',
                       style: TextStyle(
+                        color: isDark ? Colors.white : Colors.black87,
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
                       ),
@@ -333,7 +321,10 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                           color: _foregroundServiceRunning ? Colors.green : Colors.red,
                         ),
                         SizedBox(width: 8),
-                        Text('Continuous: ${_foregroundServiceRunning ? "Running" : "Stopped"}'),
+                        Text(
+                          'Continuous: ${_foregroundServiceRunning ? "Running" : "Stopped"}',
+                          style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+                        ),
                       ],
                     ),
                     SizedBox(height: 4),
@@ -345,7 +336,10 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                           color: _periodicTaskEnabled ? Colors.green : Colors.red,
                         ),
                         SizedBox(width: 8),
-                        Text('Periodic: ${_periodicTaskEnabled ? "Enabled" : "Disabled"}'),
+                        Text(
+                          'Periodic: ${_periodicTaskEnabled ? "Enabled" : "Disabled"}',
+                          style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+                        ),
                       ],
                     ),
                     SizedBox(height: 4),
@@ -357,7 +351,10 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                           color: _notificationPermissionGranted ? Colors.green : Colors.red,
                         ),
                         SizedBox(width: 8),
-                        Text('Notifications: ${_notificationPermissionGranted ? "Allowed" : "DENIED"}'),
+                        Text(
+                          'Notifications: ${_notificationPermissionGranted ? "Allowed" : "DENIED"}',
+                          style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+                        ),
                       ],
                     ),
                     if (!_notificationPermissionGranted) ...[
@@ -367,7 +364,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                         icon: Icon(Icons.settings, size: 16),
                         label: Text('Grant Permission'),
                         style: TextButton.styleFrom(
-                          foregroundColor: Colors.orange,
+                          foregroundColor: accent,
                         ),
                       ),
                     ],
@@ -377,7 +374,7 @@ class _BackgroundServiceControlState extends State<BackgroundServiceControl> {
                       style: TextStyle(
                         fontSize: 12,
                         fontStyle: FontStyle.italic,
-                        color: Colors.grey.shade700,
+                        color: isDark ? Colors.white54 : Colors.grey.shade700,
                       ),
                     ),
                   ],

@@ -36,9 +36,121 @@ class BackgroundCnnService {
 
     final rtdb = FirebaseDatabase.instanceFor(app: app);
     _rtdb = rtdb.ref();
-    _yoloRef = rtdb.ref("cam_detections/latest");
+    _yoloRef = rtdb.ref("cam_detections");
 
     _startLoop();
+  }
+
+  static Map<String, Map<String, dynamic>> _extractYoloEntries(dynamic rawRoot) {
+    final entries = <String, Map<String, dynamic>>{};
+    if (rawRoot is! Map) return entries;
+
+    final root = Map<String, dynamic>.from(rawRoot as Map);
+
+    void addEntry(Map<dynamic, dynamic> payload, {String? fallbackCameraId}) {
+      final yolo = Map<String, dynamic>.from(payload);
+      final cameraId =
+          yolo["camera_id"]?.toString().trim().isNotEmpty == true
+              ? yolo["camera_id"].toString().trim()
+              : (fallbackCameraId ?? "");
+      if (cameraId.isEmpty) return;
+
+      yolo["camera_id"] = cameraId;
+      entries[cameraId] = yolo;
+    }
+
+    final latest = root["latest"];
+    if (latest is Map) {
+      addEntry(latest);
+    }
+
+    for (final entry in root.entries) {
+      final key = entry.key.toString();
+      final value = entry.value;
+      if (key == "latest" || value is! Map) continue;
+
+      if (value["latest"] is Map) {
+        addEntry(value["latest"] as Map, fallbackCameraId: key);
+        continue;
+      }
+
+      addEntry(value as Map, fallbackCameraId: key);
+    }
+
+    return entries;
+  }
+
+  static Future<void> _runInferenceForCamera(Map<String, dynamic> yolo) async {
+    final String cameraId = yolo["camera_id"]?.toString() ?? "cam_01";
+
+    // Read camera-scoped sensor path first: sensor_data/{cameraId}/latest
+    DataSnapshot sensorSnap = await _rtdb.child("sensor_data/$cameraId/latest").get();
+    if (!sensorSnap.exists) {
+      sensorSnap = await _rtdb.child("sensor_data/latest").get();
+    }
+
+    // Get sensor data for this camera (or legacy shared sensor fallback)
+    final Map<String, dynamic> sensor = sensorSnap.exists
+        ? Map<String, dynamic>.from(sensorSnap.value as Map)
+        : <String, dynamic>{};
+
+    final Map<String, dynamic> cameraSensor = sensor;
+
+    final List<double> raw = [
+      (yolo["yolo_conf"] ?? 0).toDouble(),
+      (cameraSensor["DHT_Temp"] ?? 0).toDouble(),
+      (cameraSensor["DHT_Humidity"] ?? 0).toDouble(),
+      (cameraSensor["MQ2_Value"] ?? 0).toDouble(),
+      (cameraSensor["Flame_Det"] ?? 0).toDouble(),
+      (cameraSensor["thermal_max"] ?? 0).toDouble(),
+      (cameraSensor["thermal_avg"] ?? 0).toDouble(),
+      (yolo["yolo_fire_conf"] ?? 0).toDouble(),
+      (yolo["yolo_smoke_conf"] ?? 0).toDouble(),
+      (yolo["yolo_no_fire_conf"] ?? 1).toDouble(),
+    ];
+
+    final scaled = _scaleInput(raw);
+    final input = [scaled.map((v) => [v]).toList()];
+    final output = List.generate(1, (_) => List.filled(2, 0.0));
+
+    _interpreter!.run(input, output);
+
+    final attribution = AlertSourceAttribution.fromSignals(
+      yoloConf: raw[0],
+      temperature: raw[1],
+      humidity: raw[2],
+      mq2: raw[3],
+      flame: raw[4],
+      thermalMax: raw[5],
+      thermalAvg: raw[6],
+      yoloFireConf: raw[7],
+      yoloSmokeConf: raw[8],
+      yoloNoFireConf: raw[9],
+    );
+
+    // Write CNN results to camera-specific path
+    final cnnOutRef = _rtdb.child("cnn_results/$cameraId");
+    await cnnOutRef.set({
+      "severity": output[0][0],
+      "alert": output[0][1],
+      "timestamp": ServerValue.timestamp,
+      "input": {
+        "image_url": yolo["image_url"],
+        "yolo_conf": raw[0],
+        "yolo_fire_conf": raw[7],
+        "yolo_smoke_conf": raw[8],
+        "yolo_no_fire_conf": raw[9],
+      },
+      "sensor": {
+        "DHT_Temp": raw[1],
+        "DHT_Humidity": raw[2],
+        "MQ2_Value": raw[3],
+        "Flame_Det": raw[4],
+        "thermal_max": raw[5],
+        "thermal_avg": raw[6],
+      },
+      "attribution": attribution,
+    });
   }
 
   static void _startLoop() {
@@ -48,79 +160,12 @@ class BackgroundCnnService {
       final yoloSnap = await _yoloRef.get();
       if (!yoloSnap.exists) return;
 
-      final yolo = Map<String, dynamic>.from(yoloSnap.value as Map);
-      
-      // Extract camera_id from YOLO data
-      final String cameraId = yolo["camera_id"]?.toString() ?? "cam_01";
+      final entries = _extractYoloEntries(yoloSnap.value);
+      if (entries.isEmpty) return;
 
-      // Read camera-scoped sensor path first: sensor_data/{cameraId}/latest
-      DataSnapshot sensorSnap = await _rtdb.child("sensor_data/$cameraId/latest").get();
-      if (!sensorSnap.exists) {
-        sensorSnap = await _rtdb.child("sensor_data/latest").get();
+      for (final yolo in entries.values) {
+        await _runInferenceForCamera(yolo);
       }
-      
-      // Get sensor data for this camera (or legacy shared sensor fallback)
-      final Map<String, dynamic> sensor = sensorSnap.exists
-          ? Map<String, dynamic>.from(sensorSnap.value as Map)
-          : <String, dynamic>{};
-
-      final Map<String, dynamic> cameraSensor = sensor;
-
-      final List<double> raw = [
-        (yolo["yolo_conf"] ?? 0).toDouble(),
-        (cameraSensor["DHT_Temp"] ?? 0).toDouble(),
-        (cameraSensor["DHT_Humidity"] ?? 0).toDouble(),
-        (cameraSensor["MQ2_Value"] ?? 0).toDouble(),
-        (cameraSensor["Flame_Det"] ?? 0).toDouble(),
-        (cameraSensor["thermal_max"] ?? 0).toDouble(),
-        (cameraSensor["thermal_avg"] ?? 0).toDouble(),
-        (yolo["yolo_fire_conf"] ?? 0).toDouble(),
-        (yolo["yolo_smoke_conf"] ?? 0).toDouble(),
-        (yolo["yolo_no_fire_conf"] ?? 1).toDouble(),
-      ];
-
-      final scaled = _scaleInput(raw);
-      final input = [scaled.map((v) => [v]).toList()];
-      final output = List.generate(1, (_) => List.filled(2, 0.0));
-
-      _interpreter!.run(input, output);
-
-      final attribution = AlertSourceAttribution.fromSignals(
-        yoloConf: raw[0],
-        temperature: raw[1],
-        humidity: raw[2],
-        mq2: raw[3],
-        flame: raw[4],
-        thermalMax: raw[5],
-        thermalAvg: raw[6],
-        yoloFireConf: raw[7],
-        yoloSmokeConf: raw[8],
-        yoloNoFireConf: raw[9],
-      );
-
-      // Write CNN results to camera-specific path
-      final cnnOutRef = _rtdb.child("cnn_results/$cameraId");
-      await cnnOutRef.set({
-        "severity": output[0][0],
-        "alert": output[0][1],
-        "timestamp": ServerValue.timestamp,
-        "input": {
-          "image_url": yolo["image_url"],
-          "yolo_conf": raw[0],
-          "yolo_fire_conf": raw[7],
-          "yolo_smoke_conf": raw[8],
-          "yolo_no_fire_conf": raw[9],
-        },
-        "sensor": {
-          "DHT_Temp": raw[1],
-          "DHT_Humidity": raw[2],
-          "MQ2_Value": raw[3],
-          "Flame_Det": raw[4],
-          "thermal_max": raw[5],
-          "thermal_avg": raw[6],
-        },
-        "attribution": attribution,
-      });
     });
   }
 }

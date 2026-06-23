@@ -158,6 +158,27 @@ class _AddDeviceScreenState extends State<AddDeviceScreen>
                 ),
               ),
             ),
+
+            Positioned(
+              top: 20,
+              right: 10,
+              child: TextButton.icon(
+                onPressed: () {
+                  Navigator.pushReplacementNamed(context, '/devices_info');
+                },
+                icon: Icon(
+                  Icons.list_alt,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                label: Text(
+                  'Manage',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),

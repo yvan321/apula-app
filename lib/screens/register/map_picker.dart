@@ -1,10 +1,7 @@
-import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
-import 'package:http/http.dart' as http;
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class MapPickerScreen extends StatefulWidget {
   final String? initialAddress;
@@ -16,15 +13,14 @@ class MapPickerScreen extends StatefulWidget {
 }
 
 class _MapPickerScreenState extends State<MapPickerScreen> {
-  final MapController _mapController = MapController();
+  GoogleMapController? _mapController;
   final TextEditingController _searchController = TextEditingController();
 
-  LatLng selected = LatLng(14.5995, 120.9842); // Default Manila
+  LatLng selected = const LatLng(14.5995, 120.9842); // Default Manila
   String readableAddress = "Fetching address...";
   bool _isResolvingAddress = false;
   bool _isSearchingAddress = false;
-  bool _isLocating = false;
-  Timer? _debounceTimer;
+  bool _isGettingCurrentLocation = false;
 
   @override
   void initState() {
@@ -32,10 +28,65 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
 
     if (widget.initialAddress != null && widget.initialAddress!.isNotEmpty) {
       _searchController.text = widget.initialAddress!;
-      _searchAddress();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _searchAddress();
+      });
     }
 
     _reverseGeocode(selected);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _mapController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _useCurrentLocation() async {
+    if (mounted) {
+      setState(() => _isGettingCurrentLocation = true);
+    }
+
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        _showMessage("Location services are disabled.");
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _showMessage("Location permission is required.");
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        selected = LatLng(position.latitude, position.longitude);
+      });
+
+      await _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(selected, 17),
+      );
+      await _reverseGeocode(selected);
+    } catch (_) {
+      _showMessage("Unable to fetch current location right now.");
+    } finally {
+      if (mounted) {
+        setState(() => _isGettingCurrentLocation = false);
+      }
+    }
   }
 
   Future<void> _reverseGeocode(LatLng pos) async {
@@ -43,21 +94,32 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       setState(() => _isResolvingAddress = true);
     }
 
-    final url = Uri.parse(
-        "https://nominatim.openstreetmap.org/reverse?lat=${pos.latitude}&lon=${pos.longitude}&format=json");
-
     try {
-      final response = await http.get(url, headers: {
-        "User-Agent": "ApulaApp/1.0"
-      });
+      final places = await placemarkFromCoordinates(
+        pos.latitude,
+        pos.longitude,
+      );
 
       if (!mounted) return;
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
+      if (places.isNotEmpty) {
+        final p = places.first;
+        final parts = [
+          p.name,
+          p.street,
+          p.subLocality,
+          p.locality,
+          p.administrativeArea,
+          p.postalCode,
+          p.country,
+        ]
+            .where((part) => part != null && part!.trim().isNotEmpty)
+            .cast<String>()
+            .toList();
         setState(() {
-          readableAddress = (data["display_name"] ?? "Unknown location").toString();
+          readableAddress = parts.isNotEmpty
+              ? parts.join(', ')
+              : "Lat ${pos.latitude.toStringAsFixed(6)}, Lng ${pos.longitude.toStringAsFixed(6)}";
         });
       } else {
         setState(() {
@@ -85,34 +147,22 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       setState(() => _isSearchingAddress = true);
     }
 
-    final url = Uri.parse(
-        "https://nominatim.openstreetmap.org/search?q=${Uri.encodeQueryComponent(query)}&format=json&limit=1");
-
     try {
-      final response = await http.get(url, headers: {
-        "User-Agent": "ApulaApp/1.0"
-      });
+      final locations = await locationFromAddress(query);
 
       if (!mounted) return;
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
-        if (data is List && data.isNotEmpty) {
-          final lat = double.parse(data[0]["lat"].toString());
-          final lon = double.parse(data[0]["lon"].toString());
-
-          setState(() {
-            selected = LatLng(lat, lon);
-          });
-
-          _mapController.move(selected, 17);
-          await _reverseGeocode(selected);
-        } else {
-          _showMessage("No results found. Try a more complete address.");
-        }
+      if (locations.isNotEmpty) {
+        final hit = locations.first;
+        setState(() {
+          selected = LatLng(hit.latitude, hit.longitude);
+        });
+        await _mapController?.animateCamera(
+          CameraUpdate.newLatLngZoom(selected, 17),
+        );
+        await _reverseGeocode(selected);
       } else {
-        _showMessage("Search is temporarily unavailable. Please try again.");
+        _showMessage("No results found. Try a more complete address.");
       }
     } catch (_) {
       _showMessage("Search failed right now. Please try again.");
@@ -129,60 +179,6 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
     );
   }
 
-  Future<void> _detectMyLocation() async {
-    if (mounted) setState(() => _isLocating = true);
-
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        _showMessage("Location services are disabled. Please enable GPS.");
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          _showMessage("Location permission denied.");
-          return;
-        }
-      }
-      if (permission == LocationPermission.deniedForever) {
-        _showMessage("Location permission permanently denied. Enable it in Settings.");
-        return;
-      }
-
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
-      if (!mounted) return;
-
-      final loc = LatLng(position.latitude, position.longitude);
-      setState(() => selected = loc);
-      _mapController.move(loc, 17);
-      await _reverseGeocode(loc);
-    } catch (e) {
-      if (mounted) _showMessage("Could not detect location. Try again.");
-    } finally {
-      if (mounted) setState(() => _isLocating = false);
-    }
-  }
-
-  void _debouncedReverseGeocode(LatLng pos) {
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 800), () {
-      _reverseGeocode(pos);
-    });
-  }
-
-  @override
-  void dispose() {
-    _debounceTimer?.cancel();
-    _searchController.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -192,26 +188,24 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       ),
       body: Stack(
         children: [
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: selected,        // UPDATED
-              initialZoom: 16,                // UPDATED
-              onPositionChanged: (MapCamera camera, bool hasGesture) {
-                if (hasGesture) {
-                  selected = camera.center;
-                  _debouncedReverseGeocode(selected);
-                }
-              },
+          GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: selected,
+              zoom: 16,
             ),
-            children: [
-              TileLayer(
-                urlTemplate:
-                    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-                subdomains: const ['a', 'b', 'c'],
-                userAgentPackageName: 'com.apula.location',
-              ),
-            ],
+            mapType: MapType.normal,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            onMapCreated: (controller) {
+              _mapController = controller;
+            },
+            onCameraIdle: () {
+              _reverseGeocode(selected);
+            },
+            onCameraMove: (position) {
+              selected = position.target;
+            },
           ),
 
           const Center(
@@ -227,8 +221,9 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 Expanded(
                   child: TextField(
                     controller: _searchController,
+                    autofocus: true,
                     decoration: InputDecoration(
-                      hintText: "Search address...",
+                      hintText: "Search address or place...",
                       filled: true,
                       fillColor: Colors.white,
                       contentPadding:
@@ -259,12 +254,12 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: _isLocating ? null : _detectMyLocation,
+                  onPressed:
+                      _isGettingCurrentLocation ? null : _useCurrentLocation,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1565C0),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+                    backgroundColor: const Color(0xFFA30000),
                   ),
-                  child: _isLocating
+                  child: _isGettingCurrentLocation
                       ? const SizedBox(
                           width: 16,
                           height: 16,

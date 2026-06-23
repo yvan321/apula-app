@@ -8,10 +8,11 @@ class AlertService {
   static const String userAlertsCollection = 'user_alerts';
   static const String dispatcherCollection = 'alerts';
 
-  /// USER ALERT (medium or high severity)
+  /// USER ALERT
   static Future<void> sendUserAlert({
     required String deviceName,
     required String snapshotUrl,
+    String snapshotBase64 = "",
     required double alert,
     required double severity,
   }) async {
@@ -22,17 +23,17 @@ class AlertService {
         'type': severity >= 0.6 ? 'Severe Fire Risk' : 'Possible Fire',
         'deviceName': deviceName,
         'snapshotUrl': snapshotUrl,
+        'snapshotBase64': snapshotBase64,
         'alert': alert,
         'severity': severity,
         'timestamp': FieldValue.serverTimestamp(),
         'read': false,
 
-        // NEW — filter alerts per user
         'userId': user?.uid,
         'userEmail': user?.email,
       });
 
-      print("AlertService: sendUserAlert — success");
+      print("AlertService: sendUserAlert , success");
     } catch (e, st) {
       print("AlertService: sendUserAlert ERROR: $e\n$st");
     }
@@ -44,6 +45,7 @@ class AlertService {
     required String description,
     required Map<String, dynamic> user,
     required String snapshotUrl,
+    String snapshotBase64 = "",
   }) async {
     try {
       await _db.collection(dispatcherCollection).add({
@@ -51,11 +53,11 @@ class AlertService {
         'location': deviceName,
         'description': description,
         'snapshotUrl': snapshotUrl,
+        'snapshotBase64': snapshotBase64,
         'status': 'Pending',
         'timestamp': FieldValue.serverTimestamp(),
         'read': false,
 
-        // User metadata
         'userName': user['name'],
         'userAddress': user['address'],
         'userContact': user['contact'],
@@ -64,7 +66,7 @@ class AlertService {
         'userLongitude': user['longitude'],
       });
 
-      print("AlertService: sendDispatcherAlert — success");
+      print("AlertService: sendDispatcherAlert , success");
     } catch (e, st) {
       print("AlertService: sendDispatcherAlert ERROR: $e\n$st");
     }

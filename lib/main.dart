@@ -20,10 +20,15 @@ import 'screens/device/devices_info.dart';
 import 'screens/app/home/home_page.dart';
 import 'screens/app/live/livefootage_page.dart';
 import 'screens/app/live/live_camera_view_page.dart';
+import 'screens/app/notification/notification_page.dart';
+import 'screens/app/prediction/prediction_page.dart';
 import 'screens/app/settings/account_settings_page.dart';
 import 'screens/app/settings/about_page.dart';
 import 'screens/app/settings/notifsetting_page.dart';
+import 'screens/app/settings/settings_page.dart';
 import 'screens/register/map_picker.dart';
+import 'screens/legal/terms_screen.dart';
+import 'screens/legal/privacy_screen.dart';
 
 import 'widgets/background_service_control.dart';
 import 'widgets/global_manual_alert_button.dart';
@@ -33,6 +38,7 @@ import 'services/background_cnn_service.dart';
 import 'services/global_alert_handler.dart';
 import 'services/background_ai_manager.dart';
 import 'services/fcm_service.dart';
+import 'services/global_cnn_modal_service.dart';
 import 'utils/app_palette.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -106,20 +112,26 @@ void main() async {
     options: FirebaseYoloOptions.options,
   );
 
+  // Keep a reliable writer active even before user login/session-driven
+  // background services can start.
   await BackgroundCnnService.initialize(yoloFirebaseApp);
 
   // Initialize background AI services
   await BackgroundAIManager.initWorkManager();
   BackgroundAIManager.initForegroundTask();
 
-  // Do not auto-start monitoring here. Start/stop is user-controlled
-  // from the in-app background service controls after login.
+  // Always-on monitoring with arbitration: prefer continuous service,
+  // fallback to periodic task if foreground cannot start.
+  final foregroundStarted = await BackgroundAIManager.startForegroundService();
+  if (!foregroundStarted) {
+    await BackgroundAIManager.startPeriodicTask();
+  }
 
   // Initialize FCM for push notifications
   await FcmService.initialize();
 
-  // Note: Global CNN listener will be initialized per-camera in HomePage
-  // after devices are loaded from Firestore
+  // Keep modal alerts active app-wide, not only while HomePage is mounted.
+  GlobalCnnModalService.initialize();
 
   runApp(
     ChangeNotifierProvider(
@@ -134,16 +146,16 @@ class MyApp extends StatelessWidget {
 
   TextTheme _buildAccessibleTextTheme(TextTheme base) {
     return base.copyWith(
-      headlineLarge: base.headlineLarge?.copyWith(fontSize: 40, fontWeight: FontWeight.w700),
-      headlineMedium: base.headlineMedium?.copyWith(fontSize: 36, fontWeight: FontWeight.w700),
-      headlineSmall: base.headlineSmall?.copyWith(fontSize: 32, fontWeight: FontWeight.w600),
-      titleLarge: base.titleLarge?.copyWith(fontSize: 28, fontWeight: FontWeight.w600),
-      titleMedium: base.titleMedium?.copyWith(fontSize: 24, fontWeight: FontWeight.w600),
-      bodyLarge: base.bodyLarge?.copyWith(fontSize: 20, height: 1.4),
-      bodyMedium: base.bodyMedium?.copyWith(fontSize: 18, height: 1.4),
-      bodySmall: base.bodySmall?.copyWith(fontSize: 16, height: 1.35),
-      labelLarge: base.labelLarge?.copyWith(fontSize: 18, fontWeight: FontWeight.w600),
-      labelMedium: base.labelMedium?.copyWith(fontSize: 16),
+      headlineLarge: base.headlineLarge?.copyWith(fontSize: 34, fontWeight: FontWeight.w700),
+      headlineMedium: base.headlineMedium?.copyWith(fontSize: 30, fontWeight: FontWeight.w700),
+      headlineSmall: base.headlineSmall?.copyWith(fontSize: 26, fontWeight: FontWeight.w600),
+      titleLarge: base.titleLarge?.copyWith(fontSize: 24, fontWeight: FontWeight.w600),
+      titleMedium: base.titleMedium?.copyWith(fontSize: 20, fontWeight: FontWeight.w600),
+      bodyLarge: base.bodyLarge?.copyWith(fontSize: 18, height: 1.4),
+      bodyMedium: base.bodyMedium?.copyWith(fontSize: 16, height: 1.4),
+      bodySmall: base.bodySmall?.copyWith(fontSize: 14, height: 1.35),
+      labelLarge: base.labelLarge?.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
+      labelMedium: base.labelMedium?.copyWith(fontSize: 14),
     );
   }
 
@@ -271,11 +283,10 @@ class MyApp extends StatelessWidget {
         return ValueListenableBuilder<String?>(
           valueListenable: currentRouteName,
           builder: (context, routeName, _) {
-            final isDashboard = routeName == '/home';
             return Stack(
               children: [
                 if (child != null) child,
-                if (isDashboard) const GlobalManualAlertButton(),
+                const GlobalManualAlertButton(),
               ],
             );
           },
@@ -297,6 +308,9 @@ class MyApp extends StatelessWidget {
         '/add_device': (_) => const AddDeviceScreen(),
         '/devices_info': (_) => const DevicesInfoScreen(),
         '/live_footage': (_) => const _LiveFootageLoader(),
+        '/predictions': (_) => const _PredictionLoader(),
+        '/notifications': (_) => const _NotificationLoader(),
+        '/settings': (_) => const _SettingsLoader(),
         '/live_camera_view': (context) {
           final args =
               ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>;
@@ -311,6 +325,8 @@ class MyApp extends StatelessWidget {
         '/notifsettings_page': (_) => const NotifSettingsPage(),
         '/background_services': (_) => const BackgroundServiceControl(),
         '/pickLocation': (_) => const MapPickerScreen(),
+        '/legal/terms': (_) => const TermsScreen(),
+        '/legal/privacy': (_) => const PrivacyScreen(),
       },
     );
   }
@@ -320,12 +336,53 @@ class MyApp extends StatelessWidget {
 class _LiveFootageLoader extends StatelessWidget {
   const _LiveFootageLoader();
 
+  Future<List<String>> _loadDevices(User user) async {
+    final query = await FirebaseFirestore.instance
+        .collection('users')
+        .where('email', isEqualTo: user.email)
+        .limit(1)
+        .get()
+        .timeout(const Duration(seconds: 10));
+
+    if (query.docs.isEmpty) return <String>[];
+
+    final userData = query.docs.first.data();
+    final List<dynamic>? cameraIds = userData['cameraIds'];
+    return cameraIds != null ? List<String>.from(cameraIds) : <String>[];
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
     
     if (user == null) {
       return const LiveFootagePage(devices: []);
+    }
+
+    return FutureBuilder<List<String>>(
+      future: _loadDevices(user),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final devices = snapshot.data ?? <String>[];
+        return LiveFootagePage(devices: devices);
+      },
+    );
+  }
+}
+
+class _NotificationLoader extends StatelessWidget {
+  const _NotificationLoader();
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return const NotificationPage(availableDevices: []);
     }
 
     return StreamBuilder<QuerySnapshot>(
@@ -335,23 +392,85 @@ class _LiveFootageLoader extends StatelessWidget {
           .limit(1)
           .snapshots(),
       builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const NotificationPage(availableDevices: []);
+        }
+
+        final userData = snapshot.data!.docs.first.data() as Map<String, dynamic>;
+        final List<dynamic>? cameraIds = userData['cameraIds'];
+        final devices = cameraIds != null ? List<String>.from(cameraIds) : <String>[];
+        return NotificationPage(availableDevices: devices);
+      },
+    );
+  }
+}
+
+class _PredictionLoader extends StatelessWidget {
+  const _PredictionLoader();
+
+  Future<List<String>> _loadDevices(User user) async {
+    final query = await FirebaseFirestore.instance
+        .collection('users')
+        .where('email', isEqualTo: user.email)
+        .limit(1)
+        .get()
+        .timeout(const Duration(seconds: 10));
+
+    if (query.docs.isEmpty) return <String>[];
+
+    final userData = query.docs.first.data();
+    final List<dynamic>? cameraIds = userData['cameraIds'];
+    return cameraIds != null ? List<String>.from(cameraIds) : <String>[];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return const PredictionPage(availableDevices: []);
+    }
+
+    return FutureBuilder<List<String>>(
+      future: _loadDevices(user),
+      builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
 
+        final devices = snapshot.data ?? <String>[];
+        return PredictionPage(availableDevices: devices);
+      },
+    );
+  }
+}
+
+class _SettingsLoader extends StatelessWidget {
+  const _SettingsLoader();
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return const SettingsPage(availableDevices: []);
+    }
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: user.email)
+          .limit(1)
+          .snapshots(),
+      builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const LiveFootagePage(devices: []);
+          return const SettingsPage(availableDevices: []);
         }
 
         final userData = snapshot.data!.docs.first.data() as Map<String, dynamic>;
         final List<dynamic>? cameraIds = userData['cameraIds'];
-        final List<String> devices = cameraIds != null 
-            ? List<String>.from(cameraIds) 
-            : [];
-
-        return LiveFootagePage(devices: devices);
+        final devices = cameraIds != null ? List<String>.from(cameraIds) : <String>[];
+        return SettingsPage(availableDevices: devices);
       },
     );
   }

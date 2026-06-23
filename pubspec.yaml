@@ -32,8 +32,7 @@ dependencies:
   # Geolocation + map
   geocoding: ^2.2.1
   geolocator: ^11.0.0
-  flutter_map: ^7.0.2
-  latlong2: ^0.9.0
+  google_maps_flutter: ^2.9.0
 
   # Auth & scanner
   local_auth: ^2.2.0
@@ -93,3 +92,5 @@ flutter:
     - assets/models/feature_scaler.json
     - assets/ml/cnn_model_quant.tflite
     - assets/ml/cnn_scaler.json
+    - assets/legal/terms.md
+    - assets/legal/privacy.md

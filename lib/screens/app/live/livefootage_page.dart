@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:apula/widgets/custom_bottom_nav.dart';
 import 'package:lottie/lottie.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../../../main.dart';
@@ -18,7 +20,93 @@ class LiveFootagePage extends StatefulWidget {
 }
 
 class _LiveFootagePageState extends State<LiveFootagePage> {
+  static const String _cameraDisplayNameKey = 'camera_display_names_v1';
+
   int _selectedIndex = 1; // 📍 'Live' tab is selected
+  Map<String, String> _cameraDisplayNames = <String, String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDisplayNames();
+  }
+
+  Future<void> _loadDisplayNames() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_cameraDisplayNameKey);
+    if (raw == null || raw.trim().isEmpty) return;
+
+    try {
+      final map = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      if (!mounted) return;
+      setState(() {
+        _cameraDisplayNames = map.map(
+          (key, value) => MapEntry(key, value.toString()),
+        );
+      });
+    } catch (_) {
+      // Keep defaults if parsing fails.
+    }
+  }
+
+  String _displayNameFor(String cameraId) {
+    final custom = _cameraDisplayNames[cameraId]?.trim();
+    if (custom == null || custom.isEmpty) return cameraId;
+    return custom;
+  }
+
+  Future<void> _saveDisplayNames() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _cameraDisplayNameKey,
+      jsonEncode(_cameraDisplayNames),
+    );
+  }
+
+  Future<void> _renameCameraDisplayName(String cameraId) async {
+    final controller = TextEditingController(text: _displayNameFor(cameraId));
+
+    final updatedName = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename Camera Display Name'),
+        content: TextField(
+          controller: controller,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: 'Display name',
+            hintText: 'Example: Front Door Cam',
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext, controller.text.trim());
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    controller.dispose();
+
+    if (updatedName == null || !mounted) return;
+
+    setState(() {
+      if (updatedName.isEmpty) {
+        _cameraDisplayNames.remove(cameraId);
+      } else {
+        _cameraDisplayNames[cameraId] = updatedName;
+      }
+    });
+    await _saveDisplayNames();
+  }
 
   void _onItemTapped(int index) {
     setState(() => _selectedIndex = index);
@@ -31,16 +119,57 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
         // Stay on Live
         break;
       case 2:
-        Navigator.pushReplacementNamed(context, '/notifications');
+        Navigator.pushReplacementNamed(context, '/predictions');
         break;
       case 3:
+        Navigator.pushReplacementNamed(context, '/notifications');
+        break;
+      case 4:
         Navigator.pushReplacementNamed(context, '/settings');
         break;
     }
   }
 
+  void _showLiveGuideDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Live Footage Guide'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('1. Tap Add camera, then scan the QR code shown on your APULA camera module.'),
+            SizedBox(height: 8),
+            Text('2. If you do not have a QR yet, open Devices Info to view your registered IDs and pair from there.'),
+            SizedBox(height: 8),
+            Text('3. After scanning/pairing, wait for the camera card preview to appear in this page.'),
+            SizedBox(height: 8),
+            Text('4. Tap a camera card to open full live view. Use Rename to set a friendly name.'),
+            SizedBox(height: 8),
+            Text('5. If preview stays loading, check camera power, Wi-Fi, and cloudflare/video_feed status.'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _handleBackToHome() async {
+    Navigator.pushReplacementNamed(context, '/home');
+    return false;
+  }
+
   // 🔥 Loading dialog before opening camera view
-  void _showLoadingDialog(String cameraId) {
+  void _showLoadingDialog(String cameraId, String displayName) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final nav = Navigator.of(context, rootNavigator: true);
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -57,12 +186,12 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
             const SizedBox(height: 20),
             Center(
               child: Text(
-                "Opening $cameraId...",
+                "Opening $displayName...",
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFFA30000),
+                  color: primary,
                 ),
               ),
             ),
@@ -72,24 +201,37 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
     );
 
     // Simulate connecting, then navigate
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        Navigator.pop(context); // Close dialog
-        Navigator.pushNamed(
-          context,
+    Future.delayed(const Duration(seconds: 2), () async {
+      if (!mounted) return;
+
+      try {
+        if (nav.canPop()) {
+          nav.pop();
+        }
+
+        await Navigator.pushNamed(
+          this.context,
           '/live_camera_view',
           arguments: {
-            "deviceName": cameraId,
+            "deviceName": displayName,
             "cameraId": cameraId,
           },
         );
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(this.context).showSnackBar(
+            const SnackBar(content: Text('Unable to open live camera view right now.')),
+          );
+        }
       }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return WillPopScope(
+      onWillPop: _handleBackToHome,
+      child: Scaffold(
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -98,7 +240,7 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
             Padding(
               padding: const EdgeInsets.only(left: 10, top: 10),
               child: InkWell(
-                onTap: () => Navigator.pop(context),
+                onTap: () => Navigator.pushReplacementNamed(context, '/home'),
                 borderRadius: BorderRadius.circular(30),
                 child: Container(
                   padding: const EdgeInsets.all(8),
@@ -122,13 +264,47 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
                     // ✨ Title
                     Padding(
                       padding: const EdgeInsets.only(bottom: 20),
-                      child: Text(
-                        "Live Footage",
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontSize: 30,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              "Live Footage",
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.primary,
+                                fontSize: 30,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Manage cameras',
+                            onPressed: () {
+                              Navigator.pushNamed(context, '/devices_info');
+                            },
+                            icon: Icon(
+                              Icons.settings_input_antenna,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Add camera',
+                            onPressed: () {
+                              Navigator.pushNamed(context, '/add_device');
+                            },
+                            icon: Icon(
+                              Icons.add_circle,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'How this page works',
+                            onPressed: _showLiveGuideDialog,
+                            icon: Icon(
+                              Icons.info_outline,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
 
@@ -146,22 +322,13 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
         ),
       ),
 
-      // ➕ Floating “Add Device” button
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          Navigator.pushNamed(context, '/add_device');
-        },
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        shape: const CircleBorder(),
-        child: const Icon(Icons.add, color: Colors.white, size: 28),
-      ),
-
       // 🔽 Bottom Navigation Bar
       bottomNavigationBar: CustomBottomNavBar(
         selectedIndex: _selectedIndex,
         onItemTapped: _onItemTapped,
         availableDevices: widget.devices,
       ),
+    ),
     );
   }
 
@@ -188,9 +355,12 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
       itemCount: widget.devices.length,
       itemBuilder: (context, index) {
         final cameraId = widget.devices[index];
+        final displayName = _displayNameFor(cameraId);
         return _CameraPreviewCard(
           cameraId: cameraId,
-          onTap: () => _showLoadingDialog(cameraId),
+          displayName: displayName,
+          onTap: () => _showLoadingDialog(cameraId, displayName),
+          onRename: () => _renameCameraDisplayName(cameraId),
         );
       },
     );
@@ -200,11 +370,15 @@ class _LiveFootagePageState extends State<LiveFootagePage> {
 // 📹 Camera Preview Card with Live Feed
 class _CameraPreviewCard extends StatefulWidget {
   final String cameraId;
+  final String displayName;
   final VoidCallback onTap;
+  final VoidCallback onRename;
 
   const _CameraPreviewCard({
     required this.cameraId,
+    required this.displayName,
     required this.onTap,
+    required this.onRename,
   });
 
   @override
@@ -304,6 +478,8 @@ class _CameraPreviewCardState extends State<_CameraPreviewCard> {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+
     return Card(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
@@ -344,7 +520,7 @@ class _CameraPreviewCardState extends State<_CameraPreviewCard> {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFA30000),
+                          color: primary,
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
@@ -382,10 +558,18 @@ class _CameraPreviewCardState extends State<_CameraPreviewCard> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          widget.cameraId,
+                          widget.displayName,
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          widget.cameraId,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -428,10 +612,23 @@ class _CameraPreviewCardState extends State<_CameraPreviewCard> {
                       ],
                     ),
                   ),
-                  const Icon(
-                    Icons.arrow_forward_ios,
-                    size: 16,
-                    color: Colors.grey,
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Rename display name',
+                        onPressed: widget.onRename,
+                        icon: const Icon(
+                          Icons.edit,
+                          size: 18,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Icon(
+                        Icons.arrow_forward_ios,
+                        size: 16,
+                        color: Colors.grey,
+                      ),
+                    ],
                   ),
                 ],
               ),
